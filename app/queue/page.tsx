@@ -14,7 +14,7 @@ import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
 import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
 interface Transaction {
-  id: number
+  id: string
   date?: string
   time_in: string
   plate_number: string
@@ -54,18 +54,42 @@ function formatPrice(n: number) {
 
 const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 
+// Map old service names to new multi-select format
+function mapServiceName(raw: string): string[] {
+  const map: Record<string, string[]> = {
+    'Basic':                      ['Basic Wash'],
+    'Basic + Wax':                ['Basic Wash', 'Wax Only'],
+    'Body Wash + Wax':            ['Body Wash', 'Wax Only'],
+    'Basic + Bac to Zero':        ['Basic Wash', 'Bac-2-Zero'],
+    'Basic + Bac to Zero + Wax':  ['Basic Wash', 'Bac-2-Zero', 'Wax Only'],
+    'Body Wash':                  ['Body Wash'],
+    'Others':                     ['Others'],
+  }
+  const trimmed = raw.trim()
+  if (map[trimmed]) return map[trimmed]
+  return [trimmed]
+}
+
+function parseServiceNames(serviceNameStr: string): string[] {
+  if (!serviceNameStr) return []
+  return serviceNameStr
+    .split(',')
+    .flatMap((s) => mapServiceName(s.trim()))
+    .filter(Boolean)
+}
+
 export default function QueuePage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('today'))
   const [rows, setRows] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
-  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
     selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '',
   })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [exporting, setExporting] = useState(false)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   const [services, setServices] = useState<ServiceRow[]>([])
@@ -97,7 +121,7 @@ export default function QueuePage() {
       .order('date', { ascending: true })
       .order('time_in', { ascending: true })
     if (error) console.error('queue fetch:', error.message)
-    else setRows(data ?? [])
+    else setRows((data ?? []).map((r) => ({ ...r, id: String(r.id) })))
     setLoading(false)
   }, [range])
 
@@ -137,9 +161,7 @@ export default function QueuePage() {
     : autoTotal
 
   function startEdit(row: Transaction) {
-    const seeded = row.service_name
-      ? row.service_name.split(',').map((s) => s.trim()).filter(Boolean)
-      : []
+    const seeded = parseServiceNames(row.service_name)
     setEditingId(row.id)
     setEditState({
       selectedServices: seeded,
@@ -153,7 +175,7 @@ export default function QueuePage() {
 
   function cancelEdit() { setEditingId(null); setSaveError('') }
 
-  async function deleteRow(id: number) {
+  async function deleteRow(id: string) {
     setDeleting(true)
     const { error } = await supabase.from('transactions').delete().eq('id', id)
     setDeleting(false)
@@ -172,7 +194,7 @@ export default function QueuePage() {
     })
   }
 
-  async function saveEdit(id: number) {
+  async function saveEdit(id: string) {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
     const { error } = await supabase
@@ -227,16 +249,11 @@ export default function QueuePage() {
 
   const rangeLabel = formatRangeLabel(range)
   const isSingleDay = range.from === range.to
-
-  const inputCls =
-    'rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 ' +
-    'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
+  const carLabel = isSingleDay ? 'Cars' : 'Total Cars'
 
   const fullInputCls =
     'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
     'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
-
-  const carLabel = isSingleDay ? 'Cars' : 'Total Cars'
 
   return (
     <div className="px-6 py-6">
@@ -283,14 +300,14 @@ export default function QueuePage() {
           </div>
         ) : (
           <div className="rounded-2xl bg-white shadow-sm">
+
+            {/* Edit panel */}
             {editingId !== null && editRow && (
               <div className="border-b border-amber-200 bg-amber-50 px-6 py-5">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-sm font-bold text-amber-800">
                     Editing — {editRow.plate_number}
-                    {editRow.make || editRow.model
-                      ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}`
-                      : ''}
+                    {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
                     {' '}· {editRow.size_category}
                   </p>
                   <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">
@@ -315,14 +332,10 @@ export default function QueuePage() {
                           }}>
                           <span className="font-semibold">{svc.name}</span>
                           {!isOthers(svc.name) && unitPrice > 0 && (
-                            <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>
-                              {formatPrice(unitPrice)}
-                            </span>
+                            <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
                           )}
                           {isOthers(svc.name) && (
-                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>
-                              manual price
-                            </span>
+                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
                           )}
                         </button>
                       )
@@ -437,24 +450,14 @@ export default function QueuePage() {
                             ? new Date(row.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
                             : '—'}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-700">
-                          {formatTime(row.time_in)}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 font-bold tracking-wide text-gray-900">
-                          {row.plate_number}
-                        </td>
-                        <td className="px-4 py-3 text-gray-700">
-                          {[row.make, row.model].filter(Boolean).join(' ') || '—'}
-                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-700">{formatTime(row.time_in)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-bold tracking-wide text-gray-900">{row.plate_number}</td>
+                        <td className="px-4 py-3 text-gray-700">{[row.make, row.model].filter(Boolean).join(' ') || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.size_category}</td>
                         <td className="px-4 py-3 text-gray-700">{row.service_name}</td>
-                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">
-                          {formatPrice(row.price)}
-                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{formatPrice(row.price)}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.payment_method}</td>
-                        <td className="whitespace-nowrap px-4 py-3">
-                          <StatusBadge status={row.status} />
-                        </td>
+                        <td className="whitespace-nowrap px-4 py-3"><StatusBadge status={row.status} /></td>
                         <td className="px-4 py-3 text-gray-500">{row.notes || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           {isEditing ? (
@@ -493,9 +496,7 @@ export default function QueuePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="mb-2 text-base font-bold text-gray-900">Delete Transaction</h3>
-            <p className="mb-5 text-sm text-gray-500">
-              Are you sure you want to delete this transaction? This cannot be undone.
-            </p>
+            <p className="mb-5 text-sm text-gray-500">Are you sure you want to delete this transaction? This cannot be undone.</p>
             <div className="flex gap-3">
               <button onClick={() => deleteRow(confirmDeleteId)} disabled={deleting}
                 className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-60">
@@ -513,9 +514,7 @@ export default function QueuePage() {
   )
 }
 
-function SummaryCard({ label, value, highlight = false }: {
-  label: string; value: string; highlight?: boolean
-}) {
+function SummaryCard({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
