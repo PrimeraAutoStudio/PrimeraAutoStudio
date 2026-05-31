@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ interface ProfileRow {
   maya_merchant: string; bpi_account: string
 }
 
-type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile'
+type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile' | 'backup'
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
@@ -58,7 +58,6 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-6 text-lg font-bold text-gray-900">{children}</h2>
 }
 
-// Inline confirmation dialog
 function ConfirmModal({ title, message, note, confirmLabel = 'Confirm', danger = true, onConfirm, onCancel }: {
   title: string; message: React.ReactNode; note?: string
   confirmLabel?: string; danger?: boolean
@@ -141,7 +140,7 @@ function PriceListPanel({ onDirty }: { onDirty: () => void }) {
   )
 }
 
-// ─── Panel: Services (with price matrix) ─────────────────────────────────────
+// ─── Panel: Services ─────────────────────────────────────────────────────────
 
 const NO_PRICE_SERVICE = 'Others'
 
@@ -149,14 +148,11 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
   const [rows, setRows]               = useState<ServiceRow[]>([])
   const [sizeCategories, setSizeCategories] = useState<string[]>([])
   const [allServicePrices, setAllServicePrices] = useState<ServicePriceRow[]>([])
-  // expandedId: which service's price matrix is open
   const [expandedId, setExpandedId]   = useState<number | null>(null)
-  // editPrices: local edits for the expanded service, keyed by size_category
   const [editPrices, setEditPrices]   = useState<Record<string, string>>({})
   const [matrixSaving, setMatrixSaving] = useState(false)
   const [matrixError, setMatrixError]   = useState('')
   const [matrixSaved, setMatrixSaved]   = useState(false)
-
   const [newName, setNewName]   = useState('')
   const [adding, setAdding]     = useState(false)
   const [addError, setAddError] = useState('')
@@ -179,12 +175,9 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
     if (expandedId === row.id) { setExpandedId(null); return }
     setExpandedId(row.id)
     setMatrixError(''); setMatrixSaved(false)
-    // seed edit prices from loaded service_prices
     const seed: Record<string, string> = {}
     sizeCategories.forEach((sz) => {
-      const match = allServicePrices.find(
-        (sp) => sp.service_name === row.name && sp.size_category === sz
-      )
+      const match = allServicePrices.find((sp) => sp.service_name === row.name && sp.size_category === sz)
       seed[sz] = match ? String(match.price) : ''
     })
     setEditPrices(seed)
@@ -195,15 +188,10 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
     for (const sz of sizeCategories) {
       const val = parseFloat(editPrices[sz])
       if (isNaN(val)) continue
-      const exists = allServicePrices.some(
-        (sp) => sp.service_name === row.name && sp.size_category === sz
-      )
+      const exists = allServicePrices.some((sp) => sp.service_name === row.name && sp.size_category === sz)
       const { error: e } = exists
-        ? await supabase.from('service_prices')
-            .update({ price: val })
-            .eq('service_name', row.name).eq('size_category', sz)
-        : await supabase.from('service_prices')
-            .insert({ service_name: row.name, size_category: sz, price: val })
+        ? await supabase.from('service_prices').update({ price: val }).eq('service_name', row.name).eq('size_category', sz)
+        : await supabase.from('service_prices').insert({ service_name: row.name, size_category: sz, price: val })
       if (e) { setMatrixError(e.message); setMatrixSaving(false); return }
     }
     setMatrixSaving(false); setMatrixSaved(true)
@@ -219,8 +207,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
 
   async function deleteService(row: ServiceRow) {
     await supabase.from('services').delete().eq('id', row.id)
-    setConfirmDelete(null)
-    loadData()
+    setConfirmDelete(null); loadData()
   }
 
   async function addService() {
@@ -237,78 +224,48 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
   return (
     <div>
       <PanelTitle>Services</PanelTitle>
-
       {confirmDelete && (
-        <ConfirmModal
-          title="Delete Service"
+        <ConfirmModal title="Delete Service"
           message={<>Are you sure you want to delete <strong>{confirmDelete.name}</strong>? This cannot be undone.</>}
           confirmLabel="Delete"
           onConfirm={() => deleteService(confirmDelete)}
-          onCancel={() => setConfirmDelete(null)}
-        />
+          onCancel={() => setConfirmDelete(null)} />
       )}
-
       <div className="max-w-lg space-y-2">
         {rows.map((row) => (
           <div key={row.id} className="rounded-xl border border-gray-100 bg-white">
-            {/* Row header */}
             <div className="flex items-center justify-between px-4 py-3">
-              <span className={`text-sm font-medium ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
-                {row.name}
-              </span>
+              <span className={`text-sm font-medium ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>{row.name}</span>
               <div className="flex items-center gap-3">
-                {/* Price matrix toggle — hide for Others */}
                 {!isOthers(row.name) ? (
-                  <button
-                    onClick={() => { openMatrix(row); onDirty() }}
-                    className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]"
-                  >
+                  <button onClick={() => { openMatrix(row); onDirty() }}
+                    className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">
                     {expandedId === row.id ? 'Hide Prices' : 'Edit Prices'}
                   </button>
                 ) : (
                   <span className="text-xs italic text-gray-400">No fixed price</span>
                 )}
-                {/* Active toggle */}
-                <button
-                  onClick={() => toggle(row)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'
-                  }`}
-                >
-                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                    row.is_active ? 'translate-x-6' : 'translate-x-1'
-                  }`} />
+                <button onClick={() => toggle(row)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${row.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
-                {/* Delete */}
                 <button onClick={() => setConfirmDelete(row)}
-                  className="text-xs font-medium text-red-400 hover:text-red-600">
-                  Delete
-                </button>
+                  className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
               </div>
             </div>
-
-            {/* Expanded price matrix */}
             {expandedId === row.id && !isOthers(row.name) && (
               <div className="border-t border-gray-100 bg-gray-50 px-4 py-4">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  Price per Size Category
-                </p>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Price per Size Category</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {sizeCategories.map((sz) => (
                     <div key={sz}>
                       <label className="mb-1 block text-xs font-medium text-gray-500">{sz}</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
-                        <input
-                          type="number" min="0" step="0.01"
-                          value={editPrices[sz] ?? ''}
-                          onChange={(e) => {
-                            setEditPrices((p) => ({ ...p, [sz]: e.target.value }))
-                            onDirty()
-                          }}
+                        <input type="number" min="0" step="0.01" value={editPrices[sz] ?? ''}
+                          onChange={(e) => { setEditPrices((p) => ({ ...p, [sz]: e.target.value })); onDirty() }}
                           placeholder="0.00"
-                          className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-6 pr-2 text-sm focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20"
-                        />
+                          className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-6 pr-2 text-sm focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
                       </div>
                     </div>
                   ))}
@@ -326,16 +283,12 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
           </div>
         ))}
       </div>
-
-      {/* Add new service */}
       <div className="mt-6 flex max-w-md items-center gap-3">
-        <input type="text" placeholder="New service name…"
-          value={newName} onChange={(e) => setNewName(e.target.value)}
+        <input type="text" placeholder="New service name…" value={newName}
+          onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && addService()}
           className={inputCls} />
-        <button onClick={addService} disabled={adding || !newName.trim()} className={`${btnPrimary} shrink-0`}>
-          Add
-        </button>
+        <button onClick={addService} disabled={adding || !newName.trim()} className={`${btnPrimary} shrink-0`}>Add</button>
       </div>
       {addError && <p className="mt-2 text-sm text-red-500">{addError}</p>}
     </div>
@@ -349,8 +302,7 @@ function PaymentMethodsPanel() {
   const [statuses, setStatuses] = useState<Record<number, string>>({})
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('payment_methods').select('id, name, default_status, is_active').order('sort_order')
+    const { data } = await supabase.from('payment_methods').select('id, name, default_status, is_active').order('sort_order')
     if (data) {
       setRows(data)
       const map: Record<number, string> = {}
@@ -376,28 +328,19 @@ function PaymentMethodsPanel() {
       <PanelTitle>Payment Methods</PanelTitle>
       <div className="max-w-lg space-y-3">
         {rows.map((row) => (
-          <div key={row.id}
-            className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-100 bg-white px-4 py-3">
-            <span className={`w-20 shrink-0 text-sm font-semibold ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
-              {row.name}
-            </span>
-            <select
-              value={statuses[row.id] ?? row.default_status}
+          <div key={row.id} className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-100 bg-white px-4 py-3">
+            <span className={`w-20 shrink-0 text-sm font-semibold ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>{row.name}</span>
+            <select value={statuses[row.id] ?? row.default_status}
               onChange={(e) => setStatuses((s) => ({ ...s, [row.id]: e.target.value }))}
               onBlur={() => saveStatus(row)}
-              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:outline-none"
-            >
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:outline-none">
               <option value="On Hand">On Hand</option>
               <option value="Deposited">Deposited</option>
             </select>
             <span className="ml-auto text-xs text-gray-400">Active</span>
             <button onClick={() => toggleActive(row)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'
-              }`}>
-              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                row.is_active ? 'translate-x-6' : 'translate-x-1'
-              }`} />
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
+              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${row.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
           </div>
         ))}
@@ -420,11 +363,8 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   const [confirmDeactivate, setConfirmDeactivate] = useState<EmployeeRow | null>(null)
 
   const load = useCallback(async () => {
-    const { data, error: err } = await supabase
-      .from('employees')
-      .select('id, full_name, last_name, position, rest_day, shirt_size, boots_size, is_active')
-      .order('full_name')
-    console.log('[Employees] data:', data, 'error:', err)
+    const { data } = await supabase.from('employees')
+      .select('id, full_name, last_name, position, rest_day, shirt_size, boots_size, is_active').order('full_name')
     if (data) setRows(data)
   }, [])
 
@@ -458,46 +398,38 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">First Name *</label>
-          <input value={form.full_name}
-            onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }}
+          <input value={form.full_name} onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Allen" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Last Name</label>
-          <input value={form.last_name ?? ''}
-            onChange={(e) => { setForm((f) => ({ ...f, last_name: e.target.value })); onDirty() }}
+          <input value={form.last_name ?? ''} onChange={(e) => { setForm((f) => ({ ...f, last_name: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Flores" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Position</label>
-          <input value={form.position}
-            onChange={(e) => { setForm((f) => ({ ...f, position: e.target.value })); onDirty() }}
+          <input value={form.position} onChange={(e) => { setForm((f) => ({ ...f, position: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Washer" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Rest Day</label>
-          <input value={form.rest_day}
-            onChange={(e) => { setForm((f) => ({ ...f, rest_day: e.target.value })); onDirty() }}
+          <input value={form.rest_day} onChange={(e) => { setForm((f) => ({ ...f, rest_day: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Sunday" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Shirt Size</label>
-          <input value={form.shirt_size}
-            onChange={(e) => { setForm((f) => ({ ...f, shirt_size: e.target.value })); onDirty() }}
+          <input value={form.shirt_size} onChange={(e) => { setForm((f) => ({ ...f, shirt_size: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. M" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Boots Size</label>
-          <input value={form.boots_size}
-            onChange={(e) => { setForm((f) => ({ ...f, boots_size: e.target.value })); onDirty() }}
+          <input value={form.boots_size} onChange={(e) => { setForm((f) => ({ ...f, boots_size: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. 42" />
         </div>
       </div>
       {error && <p className="text-sm text-red-500">{error}</p>}
       <div className="flex gap-2 pt-1">
-        <button onClick={saveEmployee} disabled={saving} className={btnPrimary}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
+        <button onClick={saveEmployee} disabled={saving} className={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
         <button onClick={() => setEditId(null)} className={btnSecondary}>Cancel</button>
       </div>
     </div>
@@ -506,16 +438,13 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   return (
     <div>
       {confirmDeactivate && (
-        <ConfirmModal
-          title="Remove Employee"
-          message={<>Are you sure you want to delete <strong>{confirmDeactivate.full_name}</strong>? This cannot be undone.</>}
+        <ConfirmModal title="Remove Employee"
+          message={<>Are you sure you want to delete <strong>{confirmDeactivate.full_name}</strong>?</>}
           note="The employee record will be kept for historical records but marked as inactive."
           confirmLabel="Remove"
           onConfirm={() => deactivateEmployee(confirmDeactivate)}
-          onCancel={() => setConfirmDeactivate(null)}
-        />
+          onCancel={() => setConfirmDeactivate(null)} />
       )}
-
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Employees</PanelTitle>
         {editId !== 'new' && (
@@ -527,28 +456,21 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
       {editId === 'new' && <div className="mb-6">{EmpForm}</div>}
       <div className="grid gap-3 sm:grid-cols-2">
         {rows.map((row) => (
-          <div key={row.id}
-            className={`rounded-xl border bg-white p-4 ${row.is_active ? 'border-gray-100' : 'border-gray-100 opacity-50'}`}>
+          <div key={row.id} className={`rounded-xl border bg-white p-4 ${row.is_active ? 'border-gray-100' : 'border-gray-100 opacity-50'}`}>
             {editId === row.id ? EmpForm : (
               <>
                 <div className="mb-3 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-gray-900">{row.full_name}</p>
-                      {!row.is_active && (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">
-                          Inactive
-                        </span>
-                      )}
+                      {!row.is_active && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">Inactive</span>}
                     </div>
                     <p className="text-xs text-gray-400">{row.position}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => startEdit(row)}
-                      className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
+                    <button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
                     {row.is_active && (
-                      <button onClick={() => setConfirmDeactivate(row)}
-                        className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
+                      <button onClick={() => setConfirmDeactivate(row)} className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
                     )}
                   </div>
                 </div>
@@ -587,18 +509,14 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
 
   function startEdit(row: PayableRow) {
     setEditId(row.id)
-    setForm({ name: row.name, amount: String(row.amount),
-      due_day: row.due_day != null ? String(row.due_day) : '', category: row.category })
+    setForm({ name: row.name, amount: String(row.amount), due_day: row.due_day != null ? String(row.due_day) : '', category: row.category })
     setError('')
   }
 
   async function savePayable() {
     if (!form.name.trim() || !form.amount) { setError('Name and amount are required.'); return }
     setSaving(true); setError('')
-    const payload = {
-      name: form.name.trim(), amount: parseFloat(form.amount),
-      due_day: form.due_day ? parseInt(form.due_day) : null, category: form.category,
-    }
+    const payload = { name: form.name.trim(), amount: parseFloat(form.amount), due_day: form.due_day ? parseInt(form.due_day) : null, category: form.category }
     const { error: e } = editId === 'new'
       ? await supabase.from('payables').insert(payload)
       : await supabase.from('payables').update(payload).eq('id', editId)
@@ -614,8 +532,7 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Name *</label>
-          <input value={form.name}
-            onChange={(e) => { setForm((f) => ({ ...f, name: e.target.value })); onDirty() }}
+          <input value={form.name} onChange={(e) => { setForm((f) => ({ ...f, name: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Electric Bill" />
         </div>
         <div>
@@ -632,17 +549,14 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
         </div>
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Category</label>
-          <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-            className={inputCls}>
+          <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} className={inputCls}>
             {PAYABLE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
           </select>
         </div>
       </div>
       {error && <p className="text-sm text-red-500">{error}</p>}
       <div className="flex gap-2 pt-1">
-        <button onClick={savePayable} disabled={saving} className={btnPrimary}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
+        <button onClick={savePayable} disabled={saving} className={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
         <button onClick={() => setEditId(null)} className={btnSecondary}>Cancel</button>
       </div>
     </div>
@@ -653,9 +567,7 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Payables</PanelTitle>
         {editId !== 'new' && (
-          <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }} className={btnPrimary}>
-            + Add Payable
-          </button>
+          <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }} className={btnPrimary}>+ Add Payable</button>
         )}
       </div>
       {editId === 'new' && <div className="mb-6 max-w-md">{PayableForm}</div>}
@@ -677,28 +589,19 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
                   <td className="px-4 py-3 font-medium text-gray-800">{row.name}</td>
                   <td className="px-4 py-3 text-gray-500">{row.category}</td>
                   <td className="px-4 py-3 text-gray-500">{row.due_day ?? '—'}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                    ₱{row.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                  </td>
+                  <td className="px-4 py-3 text-right font-semibold text-gray-900">₱{row.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-right">
-                    <button onClick={() => startEdit(row)}
-                      className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
+                    <button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
                   </td>
                 </tr>
-                {editId === row.id && (
-                  <tr><td colSpan={5} className="px-4 py-3">{PayableForm}</td></tr>
-                )}
+                {editId === row.id && <tr><td colSpan={5} className="px-4 py-3">{PayableForm}</td></tr>}
               </React.Fragment>
             ))}
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-gray-100">
-              <td colSpan={3} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                Total Monthly Fixed Costs
-              </td>
-              <td className="px-4 py-3 text-right font-bold text-gray-900">
-                ₱{total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </td>
+              <td colSpan={3} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total Monthly Fixed Costs</td>
+              <td className="px-4 py-3 text-right font-bold text-gray-900">₱{total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
               <td />
             </tr>
           </tfoot>
@@ -733,8 +636,7 @@ function BusinessProfilePanel({ onDirty }: { onDirty: () => void }) {
   const [error, setError]     = useState('')
 
   useEffect(() => {
-    supabase.from('settings').select('*').eq('id', '1').single()
-      .then(({ data }) => { if (data) setProfile(data) })
+    supabase.from('settings').select('*').eq('id', '1').single().then(({ data }) => { if (data) setProfile(data) })
   }, [])
 
   async function save() {
@@ -763,15 +665,168 @@ function BusinessProfilePanel({ onDirty }: { onDirty: () => void }) {
   )
 }
 
+// ─── Panel: Backup ────────────────────────────────────────────────────────────
+
+function BackupPanel() {
+  const [loading, setLoading] = useState(false)
+  const [status, setStatus]   = useState('')
+  const [error, setError]     = useState('')
+  const [lastBackup, setLastBackup] = useState<string | null>(null)
+
+  const TABLES = [
+    'transactions', 'expenses', 'employees', 'payables',
+    'services', 'price_list', 'service_prices', 'payment_methods',
+    'loyalty_cards', 'settings',
+  ]
+
+  function toCSV(data: Record<string, unknown>[]): string {
+    if (!data.length) return ''
+    const headers = Object.keys(data[0])
+    const rows = data.map((row) =>
+      headers.map((h) => {
+        const val = row[h]
+        if (val === null || val === undefined) return ''
+        const str = String(val)
+        return str.includes(',') || str.includes('"') || str.includes('\n')
+          ? `"${str.replace(/"/g, '""')}"`
+          : str
+      }).join(',')
+    )
+    return [headers.join(','), ...rows].join('\n')
+  }
+
+  async function downloadBackup(format: 'xlsx' | 'csv') {
+    setLoading(true); setStatus('Fetching data…'); setError('')
+    try {
+      const results: Record<string, Record<string, unknown>[]> = {}
+      for (const table of TABLES) {
+        setStatus(`Fetching ${table}…`)
+        const { data, error: e } = await supabase.from(table).select('*')
+        if (e) throw new Error(`Failed to fetch ${table}: ${e.message}`)
+        results[table] = data ?? []
+      }
+
+      const now = new Date()
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const filename = `primera-backup-${dateStr}`
+
+      if (format === 'csv') {
+        // ZIP-like: download each table as separate CSV
+        setStatus('Generating CSV files…')
+        for (const table of TABLES) {
+          const csv = toCSV(results[table])
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `${filename}-${table}.csv`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+        }
+      } else {
+        // Single Excel file with one sheet per table
+        setStatus('Generating Excel file…')
+        const XLSX = await import('xlsx')
+        const wb = XLSX.utils.book_new()
+        for (const table of TABLES) {
+          const ws = XLSX.utils.json_to_sheet(results[table])
+          XLSX.utils.book_append_sheet(wb, ws, table)
+        }
+        XLSX.writeFile(wb, `${filename}.xlsx`)
+      }
+
+      setLastBackup(new Date().toLocaleString('en-PH'))
+      setStatus('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Backup failed')
+      setStatus('')
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div>
+      <PanelTitle>Data Backup</PanelTitle>
+
+      <div className="max-w-lg space-y-6">
+        {/* Info card */}
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+          <p className="text-sm font-semibold text-blue-800">What gets backed up</p>
+          <p className="mt-1 text-xs text-blue-600">
+            All tables: transactions, expenses, employees, payables, services, price list, service prices, payment methods, loyalty cards, and settings.
+          </p>
+          <p className="mt-2 text-xs text-blue-500">
+            Recommended: back up at the end of each month and store in Google Drive.
+          </p>
+        </div>
+
+        {/* Table list */}
+        <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Tables included</p>
+          <div className="flex flex-wrap gap-2">
+            {TABLES.map((t) => (
+              <span key={t} className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">{t}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Download buttons */}
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-gray-700">Download backup as:</p>
+          <div className="flex gap-3">
+            <button onClick={() => downloadBackup('xlsx')} disabled={loading}
+              className={`${btnPrimary} flex items-center gap-2`}>
+              {loading ? (
+                <span className="animate-pulse">{status || 'Working…'}</span>
+              ) : (
+                <>📊 Excel (.xlsx) — All tables in one file</>
+              )}
+            </button>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => downloadBackup('csv')} disabled={loading}
+              className={`${btnSecondary} flex items-center gap-2`}>
+              {loading ? '…' : '📄 CSV — Separate file per table'}
+            </button>
+          </div>
+        </div>
+
+        {/* Status / error */}
+        {status && !error && (
+          <div className="flex items-center gap-2 text-sm text-[#B8922A]">
+            <span className="animate-spin">⟳</span>
+            <span>{status}</span>
+          </div>
+        )}
+        {error && <p className="text-sm text-red-500">⚠ {error}</p>}
+        {lastBackup && !loading && (
+          <p className="text-xs text-green-600">✓ Last backup downloaded: {lastBackup}</p>
+        )}
+
+        {/* Manual Supabase backup tip */}
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+          <p className="text-xs font-semibold text-gray-600">Also recommended</p>
+          <p className="mt-1 text-xs text-gray-500">
+            Go to <strong>Supabase → Settings → Backups</strong> to download a full database backup. Supabase keeps 1 day of automatic backups on the free plan.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'price_list',      label: 'Price List' },
-  { id: 'services',        label: 'Services' },
-  { id: 'payment_methods', label: 'Payment Methods' },
-  { id: 'employees',       label: 'Employees' },
-  { id: 'payables',        label: 'Payables' },
-  { id: 'profile',         label: 'Business Profile' },
+const SECTIONS: { id: Section; label: string; emoji: string }[] = [
+  { id: 'price_list',      label: 'Price List',      emoji: '💲' },
+  { id: 'services',        label: 'Services',        emoji: '🛠' },
+  { id: 'payment_methods', label: 'Payment Methods', emoji: '💳' },
+  { id: 'employees',       label: 'Employees',       emoji: '👥' },
+  { id: 'payables',        label: 'Payables',        emoji: '📋' },
+  { id: 'profile',         label: 'Business Profile',emoji: '🏢' },
+  { id: 'backup',          label: '⬇ Backup',        emoji: '' },
 ]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -786,44 +841,25 @@ export default function SettingsPage() {
 
   function handleNavClick(id: Section) {
     if (id === active) return
-    if (isDirty) {
-      setPendingSection(id)
-      setShowLeaveWarning(true)
-    } else {
-      setActive(id)
-    }
+    if (isDirty) { setPendingSection(id); setShowLeaveWarning(true) }
+    else { setActive(id) }
   }
 
   function confirmLeave() {
     if (pendingSection) setActive(pendingSection)
-    setPendingSection(null)
-    setShowLeaveWarning(false)
-    setIsDirty(false)
+    setPendingSection(null); setShowLeaveWarning(false); setIsDirty(false)
   }
 
-  function cancelLeave() {
-    setPendingSection(null)
-    setShowLeaveWarning(false)
-  }
-
-  function handleSaved() {
-    setIsDirty(false)
-  }
+  function cancelLeave() { setPendingSection(null); setShowLeaveWarning(false) }
 
   return (
     <div className="px-6 py-6 pb-28">
       <div className="mx-auto max-w-5xl">
-
-        {/* Leave-without-saving confirmation */}
         {showLeaveWarning && (
-          <ConfirmModal
-            title="Unsaved Changes"
+          <ConfirmModal title="Unsaved Changes"
             message="You have unsaved changes. Are you sure you want to leave without saving?"
-            confirmLabel="Leave Without Saving"
-            danger={false}
-            onConfirm={confirmLeave}
-            onCancel={cancelLeave}
-          />
+            confirmLabel="Leave Without Saving" danger={false}
+            onConfirm={confirmLeave} onCancel={cancelLeave} />
         )}
 
         <div className="mb-6">
@@ -833,21 +869,21 @@ export default function SettingsPage() {
 
         <div className="flex gap-6">
           {/* Left sub-nav */}
-          <nav className="w-44 shrink-0">
+          <nav className="w-48 shrink-0">
             <ul className="space-y-0.5">
               {SECTIONS.map(({ id, label }) => {
                 const isActive = active === id
+                const isBackup = id === 'backup'
                 return (
                   <li key={id}>
-                    <button
-                      onClick={() => handleNavClick(id)}
+                    {isBackup && <div className="my-2 border-t border-gray-100" />}
+                    <button onClick={() => handleNavClick(id)}
                       className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
                       style={{
                         color: isActive ? '#B8922A' : '#6b7280',
                         backgroundColor: isActive ? 'rgba(184,146,42,0.08)' : 'transparent',
                         borderLeft: isActive ? '2px solid #B8922A' : '2px solid transparent',
-                      }}
-                    >
+                      }}>
                       {label}
                     </button>
                   </li>
@@ -864,11 +900,12 @@ export default function SettingsPage() {
             {active === 'employees'       && <EmployeesPanel       onDirty={markDirty} />}
             {active === 'payables'        && <PayablesPanel        onDirty={markDirty} />}
             {active === 'profile'         && <BusinessProfilePanel onDirty={markDirty} />}
+            {active === 'backup'          && <BackupPanel />}
           </div>
         </div>
       </div>
 
-      {/* Floating unsaved-changes banner */}
+      {/* Floating unsaved changes banner */}
       {isDirty && (
         <div className="fixed bottom-0 left-[220px] right-0 z-30 flex items-center justify-between border-t border-amber-200 bg-amber-50 px-6 py-3 shadow-lg">
           <div className="flex items-center gap-2">
@@ -876,15 +913,8 @@ export default function SettingsPage() {
             <span className="text-sm font-medium text-amber-800">You have unsaved changes</span>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsDirty(false)}
-              className="text-xs text-amber-600 hover:text-amber-800 underline"
-            >
-              Discard
-            </button>
-            <span className="text-xs text-amber-400">
-              Use the Save button inside each panel to save
-            </span>
+            <button onClick={() => setIsDirty(false)} className="text-xs text-amber-600 hover:text-amber-800 underline">Discard</button>
+            <span className="text-xs text-amber-400">Use the Save button inside each panel to save</span>
           </div>
         </div>
       )}
