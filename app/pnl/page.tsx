@@ -166,8 +166,8 @@ export default function PnLPage() {
 
   // ── Styles ─────────────────────────────────────────────────────────────────
   const inputCls =
-    'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm ' +
-    'focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200'
+    'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 ' +
+    'placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
   const labelCls = 'mb-1 block text-xs font-medium text-gray-600'
 
   return (
@@ -246,18 +246,20 @@ export default function PnLPage() {
                         {/* Bar */}
                         <div className="flex w-full flex-col justify-end" style={{ height: '100px' }}>
                           <div
-                            className={`w-full rounded-t transition-all ${
-                              rev === 0
-                                ? 'bg-gray-100'
+                            className="w-full rounded-t transition-all"
+                            style={{
+                              backgroundColor: rev === 0
+                                ? '#f3f4f6'
                                 : isToday
-                                ? 'bg-blue-500'
-                                : 'bg-blue-300 group-hover:bg-blue-400'
-                            }`}
+                                ? '#B8922A'
+                                : '#EDD98A',
+                            }}
                             style={{ height: rev === 0 ? '2px' : `${heightPct}%` }}
                           />
                         </div>
                         {/* Day label — show every 5th + day 1 */}
-                        <span className={`mt-1 text-[10px] ${isToday ? 'font-bold text-blue-600' : 'text-gray-400'}`}>
+                        <span className={`mt-1 text-[10px] ${isToday ? 'font-bold' : 'text-gray-400'}`}
+                          style={isToday ? { color: '#B8922A' } : {}}>
                           {dayNum === 1 || dayNum % 5 === 0 ? dayNum : ''}
                         </span>
                       </div>
@@ -273,7 +275,10 @@ export default function PnLPage() {
                 <h2 className="text-base font-semibold text-gray-800">Expense Log</h2>
                 <button
                   onClick={() => { setShowForm(v => !v); setFormError('') }}
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 active:scale-95"
+                  className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition active:scale-95"
+                  style={{ backgroundColor: '#B8922A' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}
                 >
                   {showForm ? 'Cancel' : '+ Log Expense'}
                 </button>
@@ -281,8 +286,8 @@ export default function PnLPage() {
 
               {/* Inline expense form */}
               {showForm && (
-                <form onSubmit={handleExpenseSubmit} className="border-b border-blue-100 bg-blue-50 px-6 py-5">
-                  <p className="mb-4 text-sm font-semibold text-blue-800">New Expense</p>
+                <form onSubmit={handleExpenseSubmit} className="border-b px-6 py-5" style={{ borderColor: 'rgba(184,146,42,0.2)', backgroundColor: 'rgba(184,146,42,0.05)' }}>
+                  <p className="mb-4 text-sm font-semibold" style={{ color: '#B8922A' }}>New Expense</p>
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                     <div>
                       <label className={labelCls}>Date <span className="text-red-500">*</span></label>
@@ -320,7 +325,10 @@ export default function PnLPage() {
                     <button
                       type="submit"
                       disabled={formSaving}
-                      className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                      className="rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      style={{ backgroundColor: '#B8922A' }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}
                     >
                       {formSaving ? 'Saving…' : 'Save Expense'}
                     </button>
@@ -405,7 +413,7 @@ function SummaryCard({
   color: 'blue' | 'red' | 'green' | 'gray'
 }) {
   const colorMap = {
-    blue: 'text-blue-600',
+    blue: 'text-[#B8922A]',
     red: 'text-red-600',
     green: 'text-green-600',
     gray: 'text-gray-900',
@@ -423,7 +431,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   Salary:    'bg-purple-100 text-purple-700',
   Supplies:  'bg-cyan-100 text-cyan-700',
   Gas:       'bg-yellow-100 text-yellow-700',
-  Equipment: 'bg-blue-100 text-blue-700',
+  Equipment: 'bg-amber-100 text-amber-700',
   Misc:      'bg-gray-100 text-gray-600',
 }
 

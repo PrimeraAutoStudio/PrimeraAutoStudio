@@ -123,7 +123,7 @@ export default function QueuePage() {
   }
 
   const inputCls =
-    'rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200'
+    'rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
   return (
     <div className="px-6 py-6">
@@ -137,7 +137,10 @@ export default function QueuePage() {
           </div>
           <Link
             href="/checkin"
-            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95"
+            className="rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-95"
+            style={{ backgroundColor: '#B8922A' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}
           >
             + New Check-In
           </Link>
@@ -159,7 +162,10 @@ export default function QueuePage() {
             <p className="text-gray-400">No cars checked in yet today.</p>
             <Link
               href="/checkin"
-              className="mt-4 inline-block rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+              className="mt-4 inline-block rounded-xl px-5 py-3 text-sm font-semibold text-white transition"
+              style={{ backgroundColor: '#B8922A' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}
             >
               Add the first one
             </Link>
@@ -187,7 +193,7 @@ export default function QueuePage() {
                   return (
                     <tr
                       key={row.id}
-                      className={isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}
+                      className={isEditing ? 'bg-amber-50' : 'hover:bg-gray-50'}
                     >
                       <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-700">
                         {formatTime(row.time_in)}
@@ -251,7 +257,10 @@ export default function QueuePage() {
                             <button
                               onClick={() => saveEdit(row.id)}
                               disabled={saving}
-                              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                              style={{ backgroundColor: '#B8922A' }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}
                             >
                               {saving ? 'Saving…' : 'Save'}
                             </button>
@@ -266,7 +275,10 @@ export default function QueuePage() {
                         ) : (
                           <button
                             onClick={() => startEdit(row)}
-                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:border-blue-300 hover:text-blue-600"
+                            className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+                            style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}
                           >
                             Edit
                           </button>
@@ -309,7 +321,7 @@ function SummaryCard({
       <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
       <p
         className={`mt-1 text-xl font-bold ${
-          highlight ? 'text-blue-600' : 'text-gray-900'
+          highlight ? 'text-[#B8922A]' : 'text-gray-900'
         }`}
       >
         {value}

@@ -60,6 +60,30 @@ function IconDashboard() {
   )
 }
 
+function IconPromos() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+      className="h-5 w-5 shrink-0">
+      <path d="M20 12v10H4V12" />
+      <path d="M22 7H2v5h20V7z" />
+      <path d="M12 22V7" />
+      <path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z" />
+      <path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+    </svg>
+  )
+}
+
+function IconLoyalty() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+      className="h-5 w-5 shrink-0">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </svg>
+  )
+}
+
 function IconSettings() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -73,13 +97,59 @@ function IconSettings() {
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-const NAV_ITEMS = [
-  { href: '/queue',     label: 'Queue',     Icon: IconQueue },
-  { href: '/checkin',   label: 'Check In',  Icon: IconCheckIn },
-  { href: '/pnl',       label: 'P&L',       Icon: IconPnL },
-  { href: '/dashboard', label: 'Dashboard', Icon: IconDashboard },
-  { href: '/settings',  label: 'Settings',  Icon: IconSettings  },
+const MAIN_NAV = [
+  { href: '/dashboard', label: 'Dashboard',     Icon: IconDashboard },
+  { href: '/checkin',   label: 'Check In',      Icon: IconCheckIn   },
+  { href: '/queue',     label: 'Queue',         Icon: IconQueue     },
+  { href: '/pnl',       label: 'P&L',           Icon: IconPnL       },
+  { href: '/loyalty',   label: 'Primera Circle', Icon: IconLoyalty  },
+  { href: '/promos',    label: 'Promos',         Icon: IconPromos   },
 ] as const
+
+const BOTTOM_NAV = [
+  { href: '/settings',  label: 'Settings',      Icon: IconSettings  },
+] as const
+
+// ─── NavLink ──────────────────────────────────────────────────────────────────
+
+function NavLink({
+  href, label, Icon, pathname,
+}: {
+  href: string; label: string; Icon: () => JSX.Element; pathname: string
+}) {
+  const active = pathname === href || pathname.startsWith(href + '/')
+  return (
+    <Link
+      href={href}
+      className="group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150"
+      style={{
+        color: active ? '#B8922A' : '#888',
+        backgroundColor: active ? 'rgba(184,146,42,0.08)' : 'transparent',
+      }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.color = '#D4AB4E'
+          e.currentTarget.style.backgroundColor = 'rgba(212,171,78,0.06)'
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          e.currentTarget.style.color = '#888'
+          e.currentTarget.style.backgroundColor = 'transparent'
+        }
+      }}
+    >
+      {active && (
+        <span
+          className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full"
+          style={{ backgroundColor: '#B8922A' }}
+        />
+      )}
+      <Icon />
+      {label}
+    </Link>
+  )
+}
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -112,52 +182,27 @@ function Sidebar() {
       {/* Divider */}
       <div className="mx-6 mb-4 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
-      {/* Nav links */}
+      {/* Main nav links */}
       <nav className="flex flex-col gap-1 px-3">
-        {NAV_ITEMS.map(({ href, label, Icon }) => {
-          const active = pathname === href || pathname.startsWith(href + '/')
-          return (
-            <Link
-              key={href}
-              href={href}
-              className="group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150"
-              style={{
-                color: active ? '#B8922A' : '#888',
-                backgroundColor: active ? 'rgba(184,146,42,0.08)' : 'transparent',
-              }}
-              onMouseEnter={(e) => {
-                if (!active) {
-                  e.currentTarget.style.color = '#D4AB4E'
-                  e.currentTarget.style.backgroundColor = 'rgba(212,171,78,0.06)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!active) {
-                  e.currentTarget.style.color = '#888'
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                }
-              }}
-            >
-              {/* Gold left-border accent for active item */}
-              {active && (
-                <span
-                  className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full"
-                  style={{ backgroundColor: '#B8922A' }}
-                />
-              )}
-              <Icon />
-              {label}
-            </Link>
-          )
-        })}
+        {MAIN_NAV.map(({ href, label, Icon }) => (
+          <NavLink key={href} href={href} label={label} Icon={Icon} pathname={pathname} />
+        ))}
       </nav>
 
-      {/* Spacer */}
+      {/* Spacer pushes settings to the bottom */}
       <div className="flex-1" />
+
+      {/* Divider + Settings */}
+      <div className="mx-3 mb-2 h-px" style={{ backgroundColor: '#1f1f1f' }} />
+      <nav className="flex flex-col gap-1 px-3 pb-4">
+        {BOTTOM_NAV.map(({ href, label, Icon }) => (
+          <NavLink key={href} href={href} label={label} Icon={Icon} pathname={pathname} />
+        ))}
+      </nav>
 
       {/* Bottom tag */}
       <p
-        className="px-6 pb-6 text-center text-[10px] uppercase tracking-widest"
+        className="pb-4 text-center text-[10px] uppercase tracking-widest"
         style={{ color: '#333' }}
       >
         Auto Studio POS

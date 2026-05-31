@@ -2,14 +2,15 @@
 
 export const dynamic = 'force-dynamic'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface PriceRow   { id: number; size_category: string; base_price: number }
-interface ServiceRow { id: number; name: string; is_active: boolean }
-interface PaymentRow { id: number; name: string; default_status: string; is_active: boolean }
+interface PriceRow        { id: number; size_category: string; base_price: number }
+interface ServiceRow      { id: number; name: string; is_active: boolean }
+interface ServicePriceRow { service_name: string; size_category: string; price: number }
+interface PaymentRow      { id: number; name: string; default_status: string; is_active: boolean }
 interface EmployeeRow {
   id: number; full_name: string; position: string
   rest_day: string; shirt_size: string; boots_size: string; is_active: boolean
@@ -47,8 +48,8 @@ function SaveBar({ saving, saved, error, onSave }: {
       <button onClick={onSave} disabled={saving} className={btnPrimary}>
         {saving ? 'Saving…' : 'Save Changes'}
       </button>
-      {saved && <span className="text-sm text-green-600 font-medium">Saved ✓</span>}
-      {error && <span className="text-sm text-red-500">{error}</span>}
+      {saved  && <span className="text-sm font-medium text-green-600">Saved ✓</span>}
+      {error  && <span className="text-sm text-red-500">{error}</span>}
     </div>
   )
 }
@@ -57,14 +58,42 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-6 text-lg font-bold text-gray-900">{children}</h2>
 }
 
+// Inline confirmation dialog
+function ConfirmModal({ title, message, note, confirmLabel = 'Confirm', danger = true, onConfirm, onCancel }: {
+  title: string; message: React.ReactNode; note?: string
+  confirmLabel?: string; danger?: boolean
+  onConfirm: () => void; onCancel: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h3 className="mb-2 text-base font-bold text-gray-900">{title}</h3>
+        <p className="mb-2 text-sm text-gray-500">{message}</p>
+        {note && <p className="mb-5 text-xs text-gray-400">{note}</p>}
+        {!note && <div className="mb-5" />}
+        <div className="flex gap-3">
+          <button onClick={onConfirm}
+            className={`flex-1 rounded-lg py-2.5 text-sm font-semibold text-white ${danger ? 'bg-red-500 hover:bg-red-600' : 'bg-[#B8922A] hover:bg-[#D4AB4E]'}`}>
+            {confirmLabel}
+          </button>
+          <button onClick={onCancel}
+            className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Panel: Price List ────────────────────────────────────────────────────────
 
-function PriceListPanel() {
-  const [rows, setRows] = useState<PriceRow[]>([])
+function PriceListPanel({ onDirty }: { onDirty: () => void }) {
+  const [rows, setRows]     = useState<PriceRow[]>([])
   const [prices, setPrices] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
+  const [saved, setSaved]   = useState(false)
+  const [error, setError]   = useState('')
 
   useEffect(() => {
     supabase.from('price_list').select('id, size_category, base_price').order('sort_order')
@@ -83,8 +112,7 @@ function PriceListPanel() {
     for (const row of rows) {
       const val = parseFloat(prices[row.id])
       if (isNaN(val)) continue
-      const { error: e } = await supabase
-        .from('price_list').update({ base_price: val }).eq('id', row.id)
+      const { error: e } = await supabase.from('price_list').update({ base_price: val }).eq('id', row.id)
       if (e) { setError(e.message); setSaving(false); return }
     }
     setSaving(false); setSaved(true)
@@ -94,46 +122,94 @@ function PriceListPanel() {
   return (
     <div>
       <PanelTitle>Price List</PanelTitle>
-      <div className="space-y-3 max-w-sm">
+      <div className="max-w-sm space-y-3">
         {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-4">
-            <span className="w-36 text-sm font-medium text-gray-700 shrink-0">
-              {row.size_category}
-            </span>
+            <span className="w-36 shrink-0 text-sm font-medium text-gray-700">{row.size_category}</span>
             <div className="relative flex-1">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₱</span>
-              <input
-                type="number" min="0" step="0.01"
+              <input type="number" min="0" step="0.01"
                 value={prices[row.id] ?? ''}
-                onChange={(e) => setPrices((p) => ({ ...p, [row.id]: e.target.value }))}
-                className={`${inputCls} pl-7`}
-              />
+                onChange={(e) => { setPrices((p) => ({ ...p, [row.id]: e.target.value })); onDirty() }}
+                className={`${inputCls} pl-7`} />
             </div>
           </div>
         ))}
       </div>
-      <div className="mt-6">
-        <SaveBar saving={saving} saved={saved} error={error} onSave={save} />
-      </div>
+      <div className="mt-6"><SaveBar saving={saving} saved={saved} error={error} onSave={save} /></div>
     </div>
   )
 }
 
-// ─── Panel: Services ──────────────────────────────────────────────────────────
+// ─── Panel: Services (with price matrix) ─────────────────────────────────────
 
-function ServicesPanel() {
-  const [rows, setRows] = useState<ServiceRow[]>([])
-  const [newName, setNewName] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+const NO_PRICE_SERVICE = 'Others'
 
-  const load = useCallback(async () => {
-    const { data } = await supabase.from('services').select('id, name, is_active').order('id')
-    if (data) setRows(data)
+function ServicesPanel({ onDirty }: { onDirty: () => void }) {
+  const [rows, setRows]               = useState<ServiceRow[]>([])
+  const [sizeCategories, setSizeCategories] = useState<string[]>([])
+  const [allServicePrices, setAllServicePrices] = useState<ServicePriceRow[]>([])
+  // expandedId: which service's price matrix is open
+  const [expandedId, setExpandedId]   = useState<number | null>(null)
+  // editPrices: local edits for the expanded service, keyed by size_category
+  const [editPrices, setEditPrices]   = useState<Record<string, string>>({})
+  const [matrixSaving, setMatrixSaving] = useState(false)
+  const [matrixError, setMatrixError]   = useState('')
+  const [matrixSaved, setMatrixSaved]   = useState(false)
+
+  const [newName, setNewName]   = useState('')
+  const [adding, setAdding]     = useState(false)
+  const [addError, setAddError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<ServiceRow | null>(null)
+
+  const loadData = useCallback(async () => {
+    const [{ data: svData }, { data: plData }, { data: spData }] = await Promise.all([
+      supabase.from('services').select('id, name, is_active').order('id'),
+      supabase.from('price_list').select('size_category').eq('is_active', true).order('sort_order'),
+      supabase.from('service_prices').select('service_name, size_category, price'),
+    ])
+    if (svData) setRows(svData)
+    if (plData) setSizeCategories(plData.map((r) => r.size_category))
+    if (spData) setAllServicePrices(spData)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { loadData() }, [loadData])
+
+  function openMatrix(row: ServiceRow) {
+    if (expandedId === row.id) { setExpandedId(null); return }
+    setExpandedId(row.id)
+    setMatrixError(''); setMatrixSaved(false)
+    // seed edit prices from loaded service_prices
+    const seed: Record<string, string> = {}
+    sizeCategories.forEach((sz) => {
+      const match = allServicePrices.find(
+        (sp) => sp.service_name === row.name && sp.size_category === sz
+      )
+      seed[sz] = match ? String(match.price) : ''
+    })
+    setEditPrices(seed)
+  }
+
+  async function saveMatrix(row: ServiceRow) {
+    setMatrixSaving(true); setMatrixError(''); setMatrixSaved(false)
+    for (const sz of sizeCategories) {
+      const val = parseFloat(editPrices[sz])
+      if (isNaN(val)) continue
+      const exists = allServicePrices.some(
+        (sp) => sp.service_name === row.name && sp.size_category === sz
+      )
+      const { error: e } = exists
+        ? await supabase.from('service_prices')
+            .update({ price: val })
+            .eq('service_name', row.name).eq('size_category', sz)
+        : await supabase.from('service_prices')
+            .insert({ service_name: row.name, size_category: sz, price: val })
+      if (e) { setMatrixError(e.message); setMatrixSaving(false); return }
+    }
+    setMatrixSaving(false); setMatrixSaved(true)
+    setTimeout(() => setMatrixSaved(false), 3000)
+    loadData()
+  }
 
   async function toggle(row: ServiceRow) {
     const updated = !row.is_active
@@ -141,53 +217,127 @@ function ServicesPanel() {
     await supabase.from('services').update({ is_active: updated }).eq('id', row.id)
   }
 
+  async function deleteService(row: ServiceRow) {
+    await supabase.from('services').delete().eq('id', row.id)
+    setConfirmDelete(null)
+    loadData()
+  }
+
   async function addService() {
     if (!newName.trim()) return
-    setSaving(true); setError('')
-    const { error: e } = await supabase
-      .from('services').insert({ name: newName.trim(), is_active: true })
-    setSaving(false)
-    if (e) { setError(e.message); return }
-    setNewName(''); load()
+    setAdding(true); setAddError('')
+    const { error: e } = await supabase.from('services').insert({ name: newName.trim(), is_active: true })
+    setAdding(false)
+    if (e) { setAddError(e.message); return }
+    setNewName(''); loadData()
   }
+
+  const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 
   return (
     <div>
       <PanelTitle>Services</PanelTitle>
-      <div className="space-y-2 max-w-md">
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete Service"
+          message={<>Are you sure you want to delete <strong>{confirmDelete.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          onConfirm={() => deleteService(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      <div className="max-w-lg space-y-2">
         {rows.map((row) => (
-          <div key={row.id}
-            className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
-            <span className={`text-sm font-medium ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
-              {row.name}
-            </span>
-            <button
-              onClick={() => toggle(row)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'
-              }`}
-            >
-              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                row.is_active ? 'translate-x-6' : 'translate-x-1'
-              }`} />
-            </button>
+          <div key={row.id} className="rounded-xl border border-gray-100 bg-white">
+            {/* Row header */}
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className={`text-sm font-medium ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
+                {row.name}
+              </span>
+              <div className="flex items-center gap-3">
+                {/* Price matrix toggle — hide for Others */}
+                {!isOthers(row.name) ? (
+                  <button
+                    onClick={() => { openMatrix(row); onDirty() }}
+                    className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]"
+                  >
+                    {expandedId === row.id ? 'Hide Prices' : 'Edit Prices'}
+                  </button>
+                ) : (
+                  <span className="text-xs italic text-gray-400">No fixed price</span>
+                )}
+                {/* Active toggle */}
+                <button
+                  onClick={() => toggle(row)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    row.is_active ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
+                {/* Delete */}
+                <button onClick={() => setConfirmDelete(row)}
+                  className="text-xs font-medium text-red-400 hover:text-red-600">
+                  Delete
+                </button>
+              </div>
+            </div>
+
+            {/* Expanded price matrix */}
+            {expandedId === row.id && !isOthers(row.name) && (
+              <div className="border-t border-gray-100 bg-gray-50 px-4 py-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  Price per Size Category
+                </p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {sizeCategories.map((sz) => (
+                    <div key={sz}>
+                      <label className="mb-1 block text-xs font-medium text-gray-500">{sz}</label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+                        <input
+                          type="number" min="0" step="0.01"
+                          value={editPrices[sz] ?? ''}
+                          onChange={(e) => {
+                            setEditPrices((p) => ({ ...p, [sz]: e.target.value }))
+                            onDirty()
+                          }}
+                          placeholder="0.00"
+                          className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-6 pr-2 text-sm focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {matrixError && <p className="mt-2 text-sm text-red-500">{matrixError}</p>}
+                <div className="mt-3 flex items-center gap-3">
+                  <button onClick={() => saveMatrix(row)} disabled={matrixSaving} className={btnPrimary}>
+                    {matrixSaving ? 'Saving…' : 'Save Prices'}
+                  </button>
+                  {matrixSaved && <span className="text-sm font-medium text-green-600">Saved ✓</span>}
+                  <button onClick={() => setExpandedId(null)} className={btnSecondary}>Close</button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
 
-      {/* Add new */}
-      <div className="mt-6 flex items-center gap-3 max-w-md">
-        <input
-          type="text" placeholder="New service name…"
+      {/* Add new service */}
+      <div className="mt-6 flex max-w-md items-center gap-3">
+        <input type="text" placeholder="New service name…"
           value={newName} onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && addService()}
-          className={inputCls}
-        />
-        <button onClick={addService} disabled={saving || !newName.trim()} className={`${btnPrimary} shrink-0`}>
+          className={inputCls} />
+        <button onClick={addService} disabled={adding || !newName.trim()} className={`${btnPrimary} shrink-0`}>
           Add
         </button>
       </div>
-      {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+      {addError && <p className="mt-2 text-sm text-red-500">{addError}</p>}
     </div>
   )
 }
@@ -195,7 +345,7 @@ function ServicesPanel() {
 // ─── Panel: Payment Methods ───────────────────────────────────────────────────
 
 function PaymentMethodsPanel() {
-  const [rows, setRows] = useState<PaymentRow[]>([])
+  const [rows, setRows]       = useState<PaymentRow[]>([])
   const [statuses, setStatuses] = useState<Record<number, string>>({})
 
   const load = useCallback(async () => {
@@ -218,18 +368,17 @@ function PaymentMethodsPanel() {
   }
 
   async function saveStatus(row: PaymentRow) {
-    await supabase.from('payment_methods')
-      .update({ default_status: statuses[row.id] }).eq('id', row.id)
+    await supabase.from('payment_methods').update({ default_status: statuses[row.id] }).eq('id', row.id)
   }
 
   return (
     <div>
       <PanelTitle>Payment Methods</PanelTitle>
-      <div className="space-y-3 max-w-lg">
+      <div className="max-w-lg space-y-3">
         {rows.map((row) => (
           <div key={row.id}
             className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-100 bg-white px-4 py-3">
-            <span className={`w-20 text-sm font-semibold shrink-0 ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
+            <span className={`w-20 shrink-0 text-sm font-semibold ${row.is_active ? 'text-gray-800' : 'text-gray-400'}`}>
               {row.name}
             </span>
             <select
@@ -242,12 +391,10 @@ function PaymentMethodsPanel() {
               <option value="Deposited">Deposited</option>
             </select>
             <span className="ml-auto text-xs text-gray-400">Active</span>
-            <button
-              onClick={() => toggleActive(row)}
+            <button onClick={() => toggleActive(row)}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                 row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'
-              }`}
-            >
+              }`}>
               <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
                 row.is_active ? 'translate-x-6' : 'translate-x-1'
               }`} />
@@ -264,20 +411,20 @@ function PaymentMethodsPanel() {
 
 const EMPTY_EMP = { full_name: '', position: '', rest_day: '', shirt_size: '', boots_size: '', is_active: true }
 
-function EmployeesPanel() {
-  const [rows, setRows] = useState<EmployeeRow[]>([])
+function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
+  const [rows, setRows]   = useState<EmployeeRow[]>([])
   const [editId, setEditId] = useState<number | 'new' | null>(null)
-  const [form, setForm] = useState(EMPTY_EMP)
+  const [form, setForm]   = useState(EMPTY_EMP)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [confirmDeactivate, setConfirmDeactivate] = useState<EmployeeRow | null>(null)
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error: err } = await supabase
       .from('employees')
       .select('id, full_name, position, rest_day, shirt_size, boots_size, is_active')
       .order('full_name')
-    console.log('[Employees] data:', data)
-    console.log('[Employees] error:', error)
+    console.log('[Employees] data:', data, 'error:', err)
     if (data) setRows(data)
   }, [])
 
@@ -285,32 +432,25 @@ function EmployeesPanel() {
 
   function startEdit(row: EmployeeRow) {
     setEditId(row.id)
-    setForm({
-      full_name: row.full_name,
-      position: row.position,
-      rest_day: row.rest_day,
-      shirt_size: row.shirt_size,
-      boots_size: row.boots_size,
-      is_active: row.is_active,
-    })
+    setForm({ full_name: row.full_name, position: row.position, rest_day: row.rest_day,
+      shirt_size: row.shirt_size, boots_size: row.boots_size, is_active: row.is_active })
     setError('')
   }
 
-  function startNew() {
-    setEditId('new'); setForm(EMPTY_EMP); setError('')
+  async function deactivateEmployee(row: EmployeeRow) {
+    await supabase.from('employees').update({ is_active: false }).eq('id', row.id)
+    setConfirmDeactivate(null); load()
   }
 
   async function saveEmployee() {
     if (!form.full_name.trim()) { setError('Name is required.'); return }
     setSaving(true); setError('')
-    if (editId === 'new') {
-      const { error: e } = await supabase.from('employees').insert(form)
-      if (e) { setError(e.message); setSaving(false); return }
-    } else {
-      const { error: e } = await supabase.from('employees').update(form).eq('id', editId)
-      if (e) { setError(e.message); setSaving(false); return }
-    }
-    setSaving(false); setEditId(null); load()
+    const { error: e } = editId === 'new'
+      ? await supabase.from('employees').insert(form)
+      : await supabase.from('employees').update(form).eq('id', editId)
+    setSaving(false)
+    if (e) { setError(e.message); return }
+    setEditId(null); load()
   }
 
   const EmpForm = (
@@ -318,27 +458,32 @@ function EmployeesPanel() {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Full Name *</label>
-          <input value={form.full_name} onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
+          <input value={form.full_name}
+            onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }}
             className={inputCls} placeholder="Full name" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Position</label>
-          <input value={form.position} onChange={(e) => setForm((f) => ({ ...f, position: e.target.value }))}
+          <input value={form.position}
+            onChange={(e) => { setForm((f) => ({ ...f, position: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Washer" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Rest Day</label>
-          <input value={form.rest_day} onChange={(e) => setForm((f) => ({ ...f, rest_day: e.target.value }))}
+          <input value={form.rest_day}
+            onChange={(e) => { setForm((f) => ({ ...f, rest_day: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Sunday" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Shirt Size</label>
-          <input value={form.shirt_size} onChange={(e) => setForm((f) => ({ ...f, shirt_size: e.target.value }))}
+          <input value={form.shirt_size}
+            onChange={(e) => { setForm((f) => ({ ...f, shirt_size: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. M" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Boots Size</label>
-          <input value={form.boots_size} onChange={(e) => setForm((f) => ({ ...f, boots_size: e.target.value }))}
+          <input value={form.boots_size}
+            onChange={(e) => { setForm((f) => ({ ...f, boots_size: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. 42" />
         </div>
       </div>
@@ -354,27 +499,52 @@ function EmployeesPanel() {
 
   return (
     <div>
+      {confirmDeactivate && (
+        <ConfirmModal
+          title="Remove Employee"
+          message={<>Are you sure you want to delete <strong>{confirmDeactivate.full_name}</strong>? This cannot be undone.</>}
+          note="The employee record will be kept for historical records but marked as inactive."
+          confirmLabel="Remove"
+          onConfirm={() => deactivateEmployee(confirmDeactivate)}
+          onCancel={() => setConfirmDeactivate(null)}
+        />
+      )}
+
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Employees</PanelTitle>
         {editId !== 'new' && (
-          <button onClick={startNew} className={btnPrimary}>+ Add Employee</button>
+          <button onClick={() => { setEditId('new'); setForm(EMPTY_EMP); setError('') }} className={btnPrimary}>
+            + Add Employee
+          </button>
         )}
       </div>
       {editId === 'new' && <div className="mb-6">{EmpForm}</div>}
       <div className="grid gap-3 sm:grid-cols-2">
         {rows.map((row) => (
-          <div key={row.id} className="rounded-xl border border-gray-100 bg-white p-4">
+          <div key={row.id}
+            className={`rounded-xl border bg-white p-4 ${row.is_active ? 'border-gray-100' : 'border-gray-100 opacity-50'}`}>
             {editId === row.id ? EmpForm : (
               <>
                 <div className="mb-3 flex items-start justify-between">
                   <div>
-                    <p className="font-semibold text-gray-900">{row.full_name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-gray-900">{row.full_name}</p>
+                      {!row.is_active && (
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">
+                          Inactive
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-gray-400">{row.position}</p>
                   </div>
-                  <button onClick={() => startEdit(row)}
-                    className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">
-                    Edit
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => startEdit(row)}
+                      className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
+                    {row.is_active && (
+                      <button onClick={() => setConfirmDeactivate(row)}
+                        className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex gap-4 text-xs text-gray-500">
                   <span>🗓 {row.rest_day || '—'}</span>
@@ -395,16 +565,15 @@ function EmployeesPanel() {
 const EMPTY_PAYABLE = { name: '', amount: '', due_day: '', category: 'Utilities' }
 const PAYABLE_CATEGORIES = ['Utilities', 'Rent', 'Salary', 'Supplies', 'Equipment', 'Misc']
 
-function PayablesPanel() {
-  const [rows, setRows] = useState<PayableRow[]>([])
+function PayablesPanel({ onDirty }: { onDirty: () => void }) {
+  const [rows, setRows]     = useState<PayableRow[]>([])
   const [editId, setEditId] = useState<number | 'new' | null>(null)
-  const [form, setForm] = useState(EMPTY_PAYABLE)
+  const [form, setForm]     = useState(EMPTY_PAYABLE)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError]   = useState('')
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('payables').select('id, name, amount, due_day, category').order('name')
+    const { data } = await supabase.from('payables').select('id, name, amount, due_day, category').order('name')
     if (data) setRows(data)
   }, [])
 
@@ -412,12 +581,8 @@ function PayablesPanel() {
 
   function startEdit(row: PayableRow) {
     setEditId(row.id)
-    setForm({
-      name: row.name,
-      amount: String(row.amount),
-      due_day: row.due_day != null ? String(row.due_day) : '',
-      category: row.category,
-    })
+    setForm({ name: row.name, amount: String(row.amount),
+      due_day: row.due_day != null ? String(row.due_day) : '', category: row.category })
     setError('')
   }
 
@@ -425,10 +590,8 @@ function PayablesPanel() {
     if (!form.name.trim() || !form.amount) { setError('Name and amount are required.'); return }
     setSaving(true); setError('')
     const payload = {
-      name: form.name.trim(),
-      amount: parseFloat(form.amount),
-      due_day: form.due_day ? parseInt(form.due_day) : null,
-      category: form.category,
+      name: form.name.trim(), amount: parseFloat(form.amount),
+      due_day: form.due_day ? parseInt(form.due_day) : null, category: form.category,
     }
     const { error: e } = editId === 'new'
       ? await supabase.from('payables').insert(payload)
@@ -445,13 +608,14 @@ function PayablesPanel() {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Name *</label>
-          <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          <input value={form.name}
+            onChange={(e) => { setForm((f) => ({ ...f, name: e.target.value })); onDirty() }}
             className={inputCls} placeholder="e.g. Electric Bill" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Amount (₱) *</label>
           <input type="number" min="0" step="0.01" value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+            onChange={(e) => { setForm((f) => ({ ...f, amount: e.target.value })); onDirty() }}
             className={inputCls} placeholder="0.00" />
         </div>
         <div>
@@ -483,15 +647,12 @@ function PayablesPanel() {
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Payables</PanelTitle>
         {editId !== 'new' && (
-          <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }}
-            className={btnPrimary}>
+          <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }} className={btnPrimary}>
             + Add Payable
           </button>
         )}
       </div>
-
       {editId === 'new' && <div className="mb-6 max-w-md">{PayableForm}</div>}
-
       <div className="max-w-xl overflow-hidden rounded-xl border border-gray-100 bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -515,15 +676,11 @@ function PayablesPanel() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button onClick={() => startEdit(row)}
-                      className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">
-                      Edit
-                    </button>
+                      className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
                   </td>
                 </tr>
                 {editId === row.id && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-3">{PayableForm}</td>
-                  </tr>
+                  <tr><td colSpan={5} className="px-4 py-3">{PayableForm}</td></tr>
                 )}
               </React.Fragment>
             ))}
@@ -548,14 +705,14 @@ function PayablesPanel() {
 // ─── Panel: Business Profile ──────────────────────────────────────────────────
 
 const PROFILE_FIELDS: { key: keyof ProfileRow; label: string; placeholder: string }[] = [
-  { key: 'business_name',   label: 'Business Name',      placeholder: 'Primera Auto Studio' },
-  { key: 'branch',          label: 'Branch',             placeholder: 'e.g. Main Branch' },
-  { key: 'address',         label: 'Address',            placeholder: 'Full address' },
-  { key: 'contact',         label: 'Contact Number',     placeholder: 'e.g. 09XX XXX XXXX' },
-  { key: 'email',           label: 'Email',              placeholder: 'email@example.com' },
-  { key: 'gcash_merchant',  label: 'GCash Merchant No.', placeholder: 'GCash number' },
-  { key: 'maya_merchant',   label: 'Maya Merchant No.',  placeholder: 'Maya number' },
-  { key: 'bpi_account',     label: 'BPI Account No.',    placeholder: 'BPI account number' },
+  { key: 'business_name',  label: 'Business Name',      placeholder: 'Primera Auto Studio' },
+  { key: 'branch',         label: 'Branch',             placeholder: 'e.g. Main Branch' },
+  { key: 'address',        label: 'Address',            placeholder: 'Full address' },
+  { key: 'contact',        label: 'Contact Number',     placeholder: 'e.g. 09XX XXX XXXX' },
+  { key: 'email',          label: 'Email',              placeholder: 'email@example.com' },
+  { key: 'gcash_merchant', label: 'GCash Merchant No.', placeholder: 'GCash number' },
+  { key: 'maya_merchant',  label: 'Maya Merchant No.',  placeholder: 'Maya number' },
+  { key: 'bpi_account',    label: 'BPI Account No.',    placeholder: 'BPI account number' },
 ]
 
 const EMPTY_PROFILE: ProfileRow = {
@@ -563,11 +720,11 @@ const EMPTY_PROFILE: ProfileRow = {
   contact: '', email: '', gcash_merchant: '', maya_merchant: '', bpi_account: '',
 }
 
-function BusinessProfilePanel() {
+function BusinessProfilePanel({ onDirty }: { onDirty: () => void }) {
   const [profile, setProfile] = useState<ProfileRow>(EMPTY_PROFILE)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [error, setError]     = useState('')
 
   useEffect(() => {
     supabase.from('settings').select('*').eq('id', '1').single()
@@ -589,19 +746,13 @@ function BusinessProfilePanel() {
         {PROFILE_FIELDS.map(({ key, label, placeholder }) => (
           <div key={key} className={key === 'address' ? 'sm:col-span-2' : ''}>
             <label className="mb-1 block text-xs font-medium text-gray-600">{label}</label>
-            <input
-              type="text"
-              value={(profile[key] as string) ?? ''}
-              onChange={(e) => setProfile((p) => ({ ...p, [key]: e.target.value }))}
-              placeholder={placeholder}
-              className={inputCls}
-            />
+            <input type="text" value={(profile[key] as string) ?? ''}
+              onChange={(e) => { setProfile((p) => ({ ...p, [key]: e.target.value })); onDirty() }}
+              placeholder={placeholder} className={inputCls} />
           </div>
         ))}
       </div>
-      <div className="mt-6">
-        <SaveBar saving={saving} saved={saved} error={error} onSave={save} />
-      </div>
+      <div className="mt-6"><SaveBar saving={saving} saved={saved} error={error} onSave={save} /></div>
     </div>
   )
 }
@@ -609,22 +760,66 @@ function BusinessProfilePanel() {
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
 const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'price_list',       label: 'Price List' },
-  { id: 'services',         label: 'Services' },
-  { id: 'payment_methods',  label: 'Payment Methods' },
-  { id: 'employees',        label: 'Employees' },
-  { id: 'payables',         label: 'Payables' },
-  { id: 'profile',          label: 'Business Profile' },
+  { id: 'price_list',      label: 'Price List' },
+  { id: 'services',        label: 'Services' },
+  { id: 'payment_methods', label: 'Payment Methods' },
+  { id: 'employees',       label: 'Employees' },
+  { id: 'payables',        label: 'Payables' },
+  { id: 'profile',         label: 'Business Profile' },
 ]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [active, setActive] = useState<Section>('price_list')
+  const [active, setActive]     = useState<Section>('price_list')
+  const [isDirty, setIsDirty]   = useState(false)
+  const [pendingSection, setPendingSection] = useState<Section | null>(null)
+  const [showLeaveWarning, setShowLeaveWarning] = useState(false)
+
+  const markDirty = useCallback(() => setIsDirty(true), [])
+
+  function handleNavClick(id: Section) {
+    if (id === active) return
+    if (isDirty) {
+      setPendingSection(id)
+      setShowLeaveWarning(true)
+    } else {
+      setActive(id)
+    }
+  }
+
+  function confirmLeave() {
+    if (pendingSection) setActive(pendingSection)
+    setPendingSection(null)
+    setShowLeaveWarning(false)
+    setIsDirty(false)
+  }
+
+  function cancelLeave() {
+    setPendingSection(null)
+    setShowLeaveWarning(false)
+  }
+
+  function handleSaved() {
+    setIsDirty(false)
+  }
 
   return (
-    <div className="px-6 py-6">
+    <div className="px-6 py-6 pb-28">
       <div className="mx-auto max-w-5xl">
+
+        {/* Leave-without-saving confirmation */}
+        {showLeaveWarning && (
+          <ConfirmModal
+            title="Unsaved Changes"
+            message="You have unsaved changes. Are you sure you want to leave without saving?"
+            confirmLabel="Leave Without Saving"
+            danger={false}
+            onConfirm={confirmLeave}
+            onCancel={cancelLeave}
+          />
+        )}
+
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
           <p className="text-sm text-gray-400">Manage pricing, staff, and business details</p>
@@ -639,7 +834,7 @@ export default function SettingsPage() {
                 return (
                   <li key={id}>
                     <button
-                      onClick={() => setActive(id)}
+                      onClick={() => handleNavClick(id)}
                       className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
                       style={{
                         color: isActive ? '#B8922A' : '#6b7280',
@@ -657,15 +852,36 @@ export default function SettingsPage() {
 
           {/* Panel area */}
           <div className="min-w-0 flex-1 rounded-2xl bg-white p-6 shadow-sm">
-            {active === 'price_list'      && <PriceListPanel />}
-            {active === 'services'        && <ServicesPanel />}
+            {active === 'price_list'      && <PriceListPanel      onDirty={markDirty} />}
+            {active === 'services'        && <ServicesPanel        onDirty={markDirty} />}
             {active === 'payment_methods' && <PaymentMethodsPanel />}
-            {active === 'employees'       && <EmployeesPanel />}
-            {active === 'payables'        && <PayablesPanel />}
-            {active === 'profile'         && <BusinessProfilePanel />}
+            {active === 'employees'       && <EmployeesPanel       onDirty={markDirty} />}
+            {active === 'payables'        && <PayablesPanel        onDirty={markDirty} />}
+            {active === 'profile'         && <BusinessProfilePanel onDirty={markDirty} />}
           </div>
         </div>
       </div>
+
+      {/* Floating unsaved-changes banner */}
+      {isDirty && (
+        <div className="fixed bottom-0 left-[220px] right-0 z-30 flex items-center justify-between border-t border-amber-200 bg-amber-50 px-6 py-3 shadow-lg">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            <span className="text-sm font-medium text-amber-800">You have unsaved changes</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsDirty(false)}
+              className="text-xs text-amber-600 hover:text-amber-800 underline"
+            >
+              Discard
+            </button>
+            <span className="text-xs text-amber-400">
+              Use the Save button inside each panel to save
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
