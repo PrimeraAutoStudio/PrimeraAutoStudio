@@ -13,8 +13,6 @@ import DateRangeSelector, {
 import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
 import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface Transaction {
   id: number
   date?: string
@@ -37,13 +35,11 @@ interface PaymentMethodRow { name: string }
 
 interface EditState {
   selectedServices: string[]
-  servicePriceOverrides: Record<string, string>  // keyed by service name
-  payment_method:   string
-  status:           string
-  notes:            string
+  manualPrice: string
+  payment_method: string
+  status: string
+  notes: string
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatTime(t: string | null) {
   if (!t) return '—'
@@ -58,27 +54,23 @@ function formatPrice(n: number) {
 
 const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function QueuePage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('today'))
-  const [rows, setRows]   = useState<Transaction[]>([])
-  const [loading, setLoading]     = useState(true)
+  const [rows, setRows] = useState<Transaction[]>([])
+  const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    selectedServices: [], servicePriceOverrides: {}, payment_method: '', status: '', notes: '',
+    selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '',
   })
-  const [saving, setSaving]           = useState(false)
-  const [saveError, setSaveError]     = useState('')
-  const [exporting, setExporting]     = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [exporting, setExporting] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
-  const [deleting, setDeleting]       = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
-  // ── Dropdown data for edit form ────────────────────────────────────────────
-
-  const [services, setServices]           = useState<ServiceRow[]>([])
+  const [services, setServices] = useState<ServiceRow[]>([])
   const [servicePrices, setServicePrices] = useState<ServicePriceRow[]>([])
-  const [sizes, setSizes]                 = useState<SizeRow[]>([])
+  const [sizes, setSizes] = useState<SizeRow[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
 
   useEffect(() => {
@@ -95,8 +87,6 @@ export default function QueuePage() {
     })
   }, [])
 
-  // ── Fetch transactions ─────────────────────────────────────────────────────
-
   const fetchRows = useCallback(async () => {
     if (!range.from || !range.to) return
     const { data, error } = await supabase
@@ -106,7 +96,6 @@ export default function QueuePage() {
       .lte('date', range.to)
       .order('date', { ascending: true })
       .order('time_in', { ascending: true })
-
     if (error) console.error('queue fetch:', error.message)
     else setRows(data ?? [])
     setLoading(false)
@@ -121,14 +110,10 @@ export default function QueuePage() {
     }
   }, [fetchRows, range.preset])
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
-
   const totalCars      = rows.length
   const totalRevenue   = rows.reduce((s, r) => s + r.price, 0)
   const onHandTotal    = rows.filter((r) => r.status === 'On Hand').reduce((s, r) => s + r.price, 0)
   const depositedTotal = rows.filter((r) => r.status === 'Deposited').reduce((s, r) => s + r.price, 0)
-
-  // ── Price helpers ─────────────────────────────────────────────────────────
 
   function priceForService(serviceName: string, sizeCategory: string): number {
     if (isOthers(serviceName)) return 0
@@ -140,43 +125,28 @@ export default function QueuePage() {
     return base ? base.base_price : 0
   }
 
-  // Computed totals for the currently-open edit row
-  const editRow     = rows.find((r) => r.id === editingId)
+  const editRow = rows.find((r) => r.id === editingId)
   const sizeForEdit = editRow?.size_category ?? ''
 
-  // Resolve the price for a service: use the per-row override if set, else look up from tables
-  function resolvedPrice(svcName: string): number {
-    const ov = editState.servicePriceOverrides[svcName]
-    if (ov !== undefined && ov !== '') return parseFloat(ov) || 0
-    return priceForService(svcName, sizeForEdit)
-  }
-
-  const effectivePrice = editState.selectedServices.reduce(
-    (sum, svc) => sum + resolvedPrice(svc), 0
+  const autoTotal = editState.selectedServices.reduce(
+    (sum, svc) => sum + priceForService(svc, sizeForEdit), 0
   )
 
-  // ── Inline edit ────────────────────────────────────────────────────────────
+  const effectivePrice = editState.manualPrice !== ''
+    ? parseFloat(editState.manualPrice) || 0
+    : autoTotal
 
   function startEdit(row: Transaction) {
     const seeded = row.service_name
       ? row.service_name.split(',').map((s) => s.trim()).filter(Boolean)
       : []
-
-    // Seed per-service overrides: if there's only one service, put the full saved
-    // price on it so staff immediately see what was charged. For multiple services
-    // leave the overrides blank so the lookup values show as the default.
-    const overrides: Record<string, string> = {}
-    if (seeded.length === 1) {
-      overrides[seeded[0]] = String(row.price)
-    }
-
     setEditingId(row.id)
     setEditState({
-      selectedServices:      seeded,
-      servicePriceOverrides: overrides,
-      payment_method:        row.payment_method,
-      status:                row.status,
-      notes:                 row.notes ?? '',
+      selectedServices: seeded,
+      manualPrice: '',
+      payment_method: row.payment_method,
+      status: row.status,
+      notes: row.notes ?? '',
     })
     setSaveError('')
   }
@@ -208,11 +178,11 @@ export default function QueuePage() {
     const { error } = await supabase
       .from('transactions')
       .update({
-        service_name:   serviceLabel,
-        price:          effectivePrice,
+        service_name: serviceLabel,
+        price: effectivePrice,
         payment_method: editState.payment_method,
-        status:         editState.status,
-        notes:          editState.notes,
+        status: editState.status,
+        notes: editState.notes,
       })
       .eq('id', id)
     setSaving(false)
@@ -227,13 +197,11 @@ export default function QueuePage() {
     setEditingId(null)
   }
 
-  // ── Export ────────────────────────────────────────────────────────────────
-
   async function handleExport(format: ExportFormat) {
     setExporting(true)
-    const label    = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const label = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
     const filename = `primera-queue-${label}`
-    const HEADERS  = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Notes']
+    const HEADERS = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Notes']
     const dataRows = rows.map((r) => [
       r.date ?? '', r.time_in ?? '', r.plate_number,
       r.make ?? '', r.model ?? '', r.size_category,
@@ -247,21 +215,18 @@ export default function QueuePage() {
       await downloadPdf('Queue Report', rangeLabel, [{
         title: `Transactions — ${rangeLabel}`, head: HEADERS, rows: dataRows,
         summary: [
-          { label: 'Total Cars',    value: String(totalCars) },
+          { label: 'Total Cars', value: String(totalCars) },
           { label: 'Total Revenue', value: formatPrice(totalRevenue) },
-          { label: 'On Hand',       value: formatPrice(onHandTotal) },
-          { label: 'Deposited',     value: formatPrice(depositedTotal) },
+          { label: 'On Hand', value: formatPrice(onHandTotal) },
+          { label: 'Deposited', value: formatPrice(depositedTotal) },
         ],
       }], `${filename}.pdf`)
     }
     setExporting(false)
   }
 
-  // ── Styles ────────────────────────────────────────────────────────────────
-
-  const rangeLabel  = formatRangeLabel(range)
+  const rangeLabel = formatRangeLabel(range)
   const isSingleDay = range.from === range.to
-  const carLabel    = isSingleDay ? 'Cars' : 'Total Cars'
 
   const inputCls =
     'rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 ' +
@@ -271,13 +236,11 @@ export default function QueuePage() {
     'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
     'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const carLabel = isSingleDay ? 'Cars' : 'Total Cars'
 
   return (
     <div className="px-6 py-6">
       <div className="mx-auto max-w-6xl">
-
-        {/* Header */}
         <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
           <h1 className="text-2xl font-bold text-gray-900">
             Queue — <span style={{ color: '#B8922A' }}>{rangeLabel}</span>
@@ -294,12 +257,10 @@ export default function QueuePage() {
           </div>
         </div>
 
-        {/* Date range selector */}
         <div className="mb-5 rounded-2xl bg-white p-4 shadow-sm">
           <DateRangeSelector value={range} onChange={(r) => { setRange(r); setEditingId(null) }} />
         </div>
 
-        {/* Summary cards */}
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <SummaryCard label={carLabel}      value={String(totalCars)} />
           <SummaryCard label="Total Revenue" value={formatPrice(totalRevenue)} highlight />
@@ -307,7 +268,6 @@ export default function QueuePage() {
           <SummaryCard label="Deposited"     value={formatPrice(depositedTotal)} />
         </div>
 
-        {/* Table */}
         {loading ? (
           <p className="py-16 text-center text-gray-400">Loading…</p>
         ) : rows.length === 0 ? (
@@ -323,7 +283,6 @@ export default function QueuePage() {
           </div>
         ) : (
           <div className="rounded-2xl bg-white shadow-sm">
-            {/* ── Edit panel (shown above the table when editing) ── */}
             {editingId !== null && editRow && (
               <div className="border-b border-amber-200 bg-amber-50 px-6 py-5">
                 <div className="mb-3 flex items-center justify-between">
@@ -334,27 +293,25 @@ export default function QueuePage() {
                       : ''}
                     {' '}· {editRow.size_category}
                   </p>
-                  <button onClick={cancelEdit}
-                    className="text-xs font-medium text-gray-500 hover:text-gray-700">
+                  <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">
                     ✕ Cancel
                   </button>
                 </div>
 
-                {/* Services */}
                 <div className="mb-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
                   <div className="flex flex-wrap gap-2">
                     {services.map((svc) => {
-                      const selected  = editState.selectedServices.includes(svc.name)
+                      const selected = editState.selectedServices.includes(svc.name)
                       const unitPrice = priceForService(svc.name, sizeForEdit)
                       return (
                         <button key={svc.name} type="button"
                           onClick={() => toggleEditService(svc.name)}
                           className="flex flex-col items-start rounded-xl border px-3 py-2 text-left text-xs transition-all"
                           style={{
-                            borderColor:     selected ? '#B8922A' : '#e5e7eb',
+                            borderColor: selected ? '#B8922A' : '#e5e7eb',
                             backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
-                            color:           selected ? '#B8922A' : '#374151',
+                            color: selected ? '#B8922A' : '#374151',
                           }}>
                           <span className="font-semibold">{svc.name}</span>
                           {!isOthers(svc.name) && unitPrice > 0 && (
@@ -373,7 +330,6 @@ export default function QueuePage() {
                   </div>
                 </div>
 
-                {/* Price breakdown + override */}
                 {editState.selectedServices.length > 0 && (
                   <div className="mb-4 rounded-xl border border-gray-200 bg-white px-4 py-3">
                     <div className="mb-2 space-y-1">
@@ -409,7 +365,6 @@ export default function QueuePage() {
                   </div>
                 )}
 
-                {/* Payment, Status, Notes */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Payment Method</label>
@@ -438,7 +393,6 @@ export default function QueuePage() {
                   </div>
                 </div>
 
-                {/* Save / error */}
                 {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
                 <div className="mt-4 flex gap-2">
                   <button onClick={() => saveEdit(editingId)} disabled={saving || editState.selectedServices.length === 0}
@@ -456,7 +410,6 @@ export default function QueuePage() {
               </div>
             )}
 
-            {/* ── Transactions table ── */}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px] text-sm">
                 <thead>
@@ -478,8 +431,7 @@ export default function QueuePage() {
                   {rows.map((row) => {
                     const isEditing = editingId === row.id
                     return (
-                      <tr key={row.id}
-                        className={isEditing ? 'bg-amber-50/60' : 'hover:bg-gray-50'}>
+                      <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : 'hover:bg-gray-50'}>
                         <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
                           {!isSingleDay && row.date
                             ? new Date(row.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
@@ -537,7 +489,6 @@ export default function QueuePage() {
         )}
       </div>
 
-      {/* Delete confirmation modal */}
       {confirmDeleteId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
@@ -561,8 +512,6 @@ export default function QueuePage() {
     </div>
   )
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SummaryCard({ label, value, highlight = false }: {
   label: string; value: string; highlight?: boolean
