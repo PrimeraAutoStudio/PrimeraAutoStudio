@@ -17,14 +17,16 @@ import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 interface Transaction { date: string; price: number }
 
 interface Expense {
-  id: number; date: string; description: string; category: string
+  id: number; date: string; assignee: string | null; description: string; category: string
   amount: number; payment_type: string; notes: string | null
 }
 
 interface ExpenseForm {
-  date: string; description: string; category: string
+  date: string; assignee: string; description: string; category: string
   amount: string; payment_type: string; notes: string
 }
+
+interface EmployeeOption { id: number; full_name: string; last_name: string | null }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -52,9 +54,14 @@ const CAT_BADGE: Record<string, string> = {
   Utilities: 'bg-lime-100 text-lime-700',
 }
 
+function localToday() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const EMPTY_EXPENSE_FORM: ExpenseForm = {
-  date: new Date().toISOString().split('T')[0],
-  description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
+  date: localToday(),
+  assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -63,12 +70,16 @@ function formatPHP(n: number) {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2 })
 }
 
+function localIso(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function datesBetween(from: string, to: string): string[] {
   const dates: string[] = []
   const cur = new Date(from + 'T00:00:00')
   const end = new Date(to + 'T00:00:00')
   while (cur <= end) {
-    dates.push(cur.toISOString().split('T')[0])
+    dates.push(localIso(cur))
     cur.setDate(cur.getDate() + 1)
   }
   return dates
@@ -470,6 +481,7 @@ export default function PnLPage() {
   const [expenses, setExpenses]         = useState<Expense[]>([])
   const [dataLoading, setDataLoading]   = useState(true)
 
+  const [employees, setEmployees]   = useState<EmployeeOption[]>([])
   const [exporting, setExporting]   = useState(false)
   const [showForm, setShowForm]     = useState(false)
   const [form, setForm]             = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
@@ -481,18 +493,23 @@ export default function PnLPage() {
   const fetchData = useCallback(async () => {
     if (!range.from || !range.to) return
     setDataLoading(true)
-    const [{ data: tx, error: txErr }, { data: ex, error: exErr }] = await Promise.all([
+    const [{ data: tx, error: txErr }, { data: ex, error: exErr }, { data: em }] = await Promise.all([
       supabase.from('transactions').select('date, price')
         .gte('date', range.from).lte('date', range.to),
       supabase.from('expenses')
-        .select('id, date, description, category, amount, payment_type, notes')
+        .select('id, date, assignee, description, category, amount, payment_type, notes')
         .gte('date', range.from).lte('date', range.to)
         .order('date', { ascending: false }),
+      supabase.from('employees')
+        .select('id, full_name, last_name')
+        .eq('is_active', true)
+        .order('full_name'),
     ])
     if (txErr) console.error('transactions:', txErr.message)
     if (exErr) console.error('expenses:', exErr.message)
     setTransactions(tx ?? [])
     setExpenses(ex ?? [])
+    if (em) setEmployees(em)
     setDataLoading(false)
   }, [range])
 
@@ -518,7 +535,7 @@ export default function PnLPage() {
     setDonutLoading(true)
     const { data, error } = await supabase
       .from('expenses')
-      .select('id, date, description, category, amount, payment_type, notes')
+      .select('id, date, assignee, description, category, amount, payment_type, notes')
       .gte('date', donutRange.from).lte('date', donutRange.to)
     if (error) console.error('donut expenses:', error.message)
     setDonutExpenses(data ?? [])
@@ -532,7 +549,7 @@ export default function PnLPage() {
     setTrackerLoading(true)
     const { data, error } = await supabase
       .from('expenses')
-      .select('id, date, description, category, amount, payment_type, notes')
+      .select('id, date, assignee, description, category, amount, payment_type, notes')
       .gte('date', trackerRange.from).lte('date', trackerRange.to)
     if (error) console.error('tracker expenses:', error.message)
     setTrackerExpenses(data ?? [])
@@ -575,6 +592,19 @@ export default function PnLPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
     const { name, value } = e.target
+
+    // Auto-split "Description - Name" pattern when the description field loses focus
+    // e.g. "Salary - Jhun" → description="Salary", assignee="Jhun"
+    if (name === 'description' && value.includes(' - ')) {
+      const dashIdx = value.indexOf(' - ')
+      const descPart = value.slice(0, dashIdx).trim()
+      const namePart = value.slice(dashIdx + 3).trim()
+      if (namePart) {
+        setForm((f) => ({ ...f, description: descPart, assignee: f.assignee || namePart }))
+        return
+      }
+    }
+
     setForm((f) => ({ ...f, [name]: value }))
   }
 
@@ -587,8 +617,13 @@ export default function PnLPage() {
     }
     setFormSaving(true)
     const { error } = await supabase.from('expenses').insert({
-      date: form.date, description: form.description, category: form.category,
-      amount: parseFloat(form.amount), payment_type: form.payment_type, notes: form.notes,
+      date: form.date,
+      assignee: form.assignee || null,
+      description: form.description,
+      category: form.category,
+      amount: parseFloat(form.amount),
+      payment_type: form.payment_type,
+      notes: form.notes,
     })
     setFormSaving(false)
     if (error) { setFormError(error.message); return }
@@ -605,8 +640,8 @@ export default function PnLPage() {
     const filename = `primera-pnl-${label}`
     const TX_HEAD  = ['Date', 'Price', 'Payment Method', 'Status']
     const txRows   = transactions.map((t) => [t.date, t.price, '', ''])
-    const EX_HEAD  = ['Date', 'Description', 'Category', 'Amount', 'Payment Type', 'Notes']
-    const exRows   = expenses.map((e) => [e.date, e.description, e.category, e.amount, e.payment_type, e.notes ?? ''])
+    const EX_HEAD  = ['Date', 'Assignee', 'Description', 'Category', 'Amount', 'Payment Type', 'Notes']
+    const exRows   = expenses.map((e) => [e.date, e.assignee ?? '', e.description, e.category, e.amount, e.payment_type, e.notes ?? ''])
     const summary  = [
       { label: 'Total Revenue',  value: formatPHP(totalRevenue) },
       { label: 'Total Expenses', value: formatPHP(totalExpenses) },
@@ -774,9 +809,19 @@ export default function PnLPage() {
                       <label className={labelCls}>Date <span className="text-red-500">*</span></label>
                       <input type="date" name="date" value={form.date} onChange={handleFormChange} className={inputCls} required />
                     </div>
-                    <div className="sm:col-span-2">
+                    <div>
+                      <label className={labelCls}>Assignee</label>
+                      <select name="assignee" value={form.assignee} onChange={handleFormChange} className={inputCls}>
+                        <option value="">— None —</option>
+                        {employees.map((emp) => {
+                          const display = [emp.full_name, emp.last_name].filter(Boolean).join(' ')
+                          return <option key={emp.id} value={display}>{display}</option>
+                        })}
+                      </select>
+                    </div>
+                    <div>
                       <label className={labelCls}>Description <span className="text-red-500">*</span></label>
-                      <input type="text" name="description" value={form.description} onChange={handleFormChange} placeholder="e.g. Cleaning supplies" className={inputCls} required />
+                      <input type="text" name="description" value={form.description} onChange={handleFormChange} placeholder="e.g. Gas, Food, Cash Advance" className={inputCls} required />
                     </div>
                     <div>
                       <label className={labelCls}>Category</label>
@@ -824,6 +869,7 @@ export default function PnLPage() {
                     <thead>
                       <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
                         <th className="px-6 py-3">Date</th>
+                        <th className="px-6 py-3">Assignee</th>
                         <th className="px-6 py-3">Description</th>
                         <th className="px-6 py-3">Category</th>
                         <th className="px-6 py-3">Amount</th>
@@ -837,6 +883,7 @@ export default function PnLPage() {
                           <td className="whitespace-nowrap px-6 py-3 text-gray-500">
                             {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
                           </td>
+                          <td className="px-6 py-3 text-gray-700">{ex.assignee || '—'}</td>
                           <td className="px-6 py-3 font-medium text-gray-800">{ex.description}</td>
                           <td className="px-6 py-3"><CategoryBadge category={ex.category} /></td>
                           <td className="whitespace-nowrap px-6 py-3 font-semibold text-gray-900">{formatPHP(ex.amount)}</td>
@@ -847,7 +894,7 @@ export default function PnLPage() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-gray-100">
-                        <td colSpan={3} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total</td>
+                        <td colSpan={4} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total</td>
                         <td className="px-6 py-3 font-bold text-gray-900">{formatPHP(totalExpenses)}</td>
                         <td colSpan={2} />
                       </tr>

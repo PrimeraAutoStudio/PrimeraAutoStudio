@@ -12,7 +12,7 @@ interface ServiceRow      { id: number; name: string; is_active: boolean }
 interface ServicePriceRow { service_name: string; size_category: string; price: number }
 interface PaymentRow      { id: number; name: string; default_status: string; is_active: boolean }
 interface EmployeeRow {
-  id: number; full_name: string; position: string
+  id: number; full_name: string; last_name: string | null; position: string
   rest_day: string; shirt_size: string; boots_size: string; is_active: boolean
 }
 interface PayableRow {
@@ -29,8 +29,8 @@ type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'pa
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm ' +
-  'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
+  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
+  'placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
 const btnPrimary =
   'rounded-lg bg-[#B8922A] px-4 py-2 text-sm font-semibold text-white ' +
@@ -409,7 +409,7 @@ function PaymentMethodsPanel() {
 
 // ─── Panel: Employees ─────────────────────────────────────────────────────────
 
-const EMPTY_EMP = { full_name: '', position: '', rest_day: '', shirt_size: '', boots_size: '', is_active: true }
+const EMPTY_EMP = { full_name: '', last_name: '', position: '', rest_day: '', shirt_size: '', boots_size: '', is_active: true }
 
 function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   const [rows, setRows]   = useState<EmployeeRow[]>([])
@@ -422,7 +422,7 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
       .from('employees')
-      .select('id, full_name, position, rest_day, shirt_size, boots_size, is_active')
+      .select('id, full_name, last_name, position, rest_day, shirt_size, boots_size, is_active')
       .order('full_name')
     console.log('[Employees] data:', data, 'error:', err)
     if (data) setRows(data)
@@ -432,8 +432,8 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
 
   function startEdit(row: EmployeeRow) {
     setEditId(row.id)
-    setForm({ full_name: row.full_name, position: row.position, rest_day: row.rest_day,
-      shirt_size: row.shirt_size, boots_size: row.boots_size, is_active: row.is_active })
+    setForm({ full_name: row.full_name, last_name: row.last_name ?? '', position: row.position,
+      rest_day: row.rest_day, shirt_size: row.shirt_size, boots_size: row.boots_size, is_active: row.is_active })
     setError('')
   }
 
@@ -456,11 +456,17 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   const EmpForm = (
     <div className="rounded-xl border border-[#B8922A]/30 bg-amber-50/40 p-4 space-y-3 max-w-md">
       <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <label className="mb-1 block text-xs font-medium text-gray-600">Full Name *</label>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">First Name *</label>
           <input value={form.full_name}
             onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="Full name" />
+            className={inputCls} placeholder="e.g. Allen" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Last Name</label>
+          <input value={form.last_name ?? ''}
+            onChange={(e) => { setForm((f) => ({ ...f, last_name: e.target.value })); onDirty() }}
+            className={inputCls} placeholder="e.g. Flores" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Position</label>
