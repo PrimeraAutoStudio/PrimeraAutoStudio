@@ -14,7 +14,10 @@ import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Transaction { date: string; price: number }
+interface Transaction {
+  date: string; price: number
+  service_name?: string; payment_method?: string; status?: string
+}
 
 interface Expense {
   id: number; date: string; assignee: string | null; description: string; category: string
@@ -481,8 +484,8 @@ export default function PnLPage() {
     if (!range.from || !range.to) return
     setDataLoading(true)
     const [{ data: tx, error: txErr }, { data: ex, error: exErr }, { data: em }] = await Promise.all([
-      supabase.from('transactions').select('date, price')
-        .gte('date', range.from).lte('date', range.to),
+      supabase.from('transactions').select('date, price, service_name, payment_method, status')
+        .gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('expenses')
         .select('id, date, assignee, description, category, amount, payment_type, notes')
         .gte('date', range.from).lte('date', range.to)
@@ -922,6 +925,64 @@ export default function PnLPage() {
                         <td colSpan={4} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total</td>
                         <td className="px-6 py-3 font-bold text-gray-900">{formatPHP(totalExpenses)}</td>
                         <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* ── 4. Transaction Log ── */}
+            <section className="rounded-2xl bg-white shadow-sm">
+              <div className="border-b border-gray-100 px-6 py-4">
+                <h2 className="text-base font-semibold text-gray-800">
+                  Transaction Log —{' '}
+                  <span className="text-sm font-normal" style={{ color: '#B8922A' }}>{formatRangeLabel(range)}</span>
+                </h2>
+              </div>
+              {transactions.length === 0 ? (
+                <p className="py-12 text-center text-sm text-gray-400">No transactions for this period.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead>
+                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
+                        <th className="px-6 py-3">Date</th>
+                        <th className="px-6 py-3">Service</th>
+                        <th className="px-6 py-3">Payment</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-right">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {transactions.map((tx, i) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="whitespace-nowrap px-6 py-3 text-gray-500">
+                              {new Date(tx.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </td>
+                            <td className="px-6 py-3 text-gray-700">{tx.service_name || '—'}</td>
+                            <td className="px-6 py-3 text-gray-500">{tx.payment_method || '—'}</td>
+                            <td className="px-6 py-3">
+                              {tx.status
+                                ? <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                    tx.status === 'Deposited' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                                  }`}>{tx.status}</span>
+                                : '—'}
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-3 text-right font-semibold text-gray-900">
+                              {formatPHP(tx.price)}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-gray-100">
+                        <td colSpan={4} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                          Total Revenue
+                        </td>
+                        <td className="px-6 py-3 text-right font-bold text-gray-900">
+                          {formatPHP(totalRevenue)}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>

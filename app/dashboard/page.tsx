@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import DateRangeSelector, {
   DateRange,
@@ -90,12 +90,44 @@ export default function DashboardPage() {
   const now      = new Date()
   const todayStr = isoDate(now)
 
-  const [range, setRange]       = useState<DateRange>(rangeForPreset('today'))
+  const [range, setRange]         = useState<DateRange>(rangeForPreset('today'))
   const [txRange, setTxRange]     = useState<Transaction[]>([])
   const [txMonth, setTxMonth]     = useState<Transaction[]>([])
   const [payables, setPayables]   = useState<Payable[]>([])
   const [loading, setLoading]     = useState(true)
   const [exporting, setExporting] = useState(false)
+
+  // ── Live stats (always today, auto-refreshes every 30s) ──────────────────
+  const [liveTx, setLiveTx]         = useState<Transaction[]>([])
+  const [liveLoading, setLiveLoading] = useState(true)
+
+  const fetchLive = useCallback(async () => {
+    const { data } = await supabase
+      .from('transactions')
+      .select('date, price, status, service_name, payment_method')
+      .eq('date', todayStr)
+    setLiveTx(data ?? [])
+    setLiveLoading(false)
+  }, [todayStr])
+
+  useEffect(() => {
+    fetchLive()
+    const id = setInterval(fetchLive, 30_000)
+    return () => clearInterval(id)
+  }, [fetchLive])
+
+  // ── Live stats derived ─────────────────────────────────────────────────────
+  const liveCars      = liveTx.length
+  const liveRevenue   = liveTx.reduce((s, t) => s + t.price, 0)
+  const liveOnHand    = liveTx.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
+  const liveSvcMap: Record<string, number> = {}
+  liveTx.forEach((t) => {
+    t.service_name.split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => {
+      liveSvcMap[s] = (liveSvcMap[s] ?? 0) + 1
+    })
+  })
+  const liveTopServices = Object.entries(liveSvcMap)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3)
 
   // ── Derived month bounds from the range's `from` date ─────────────────────
   const { firstOfMonth, lastOfMonth, year, month } =
@@ -295,6 +327,32 @@ export default function DashboardPage() {
           </div>
         </div>
 
+
+        {/* ── Live Stats (always today, 30s refresh) ── */}
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <SectionTitle>Live — Today</SectionTitle>
+            <span className="text-xs text-gray-400">
+              {liveLoading ? 'Refreshing…' : `${liveCars} car${liveCars !== 1 ? 's' : ''} · auto-refreshes every 30s`}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <StatCard label="Cars Today"   value={String(liveCars)} />
+            <StatCard label="Revenue"      value={formatPHP(liveRevenue)} accent />
+            <StatCard label="On Hand"      value={formatPHP(liveOnHand)} />
+            <div className="rounded-2xl bg-white p-5 shadow-sm">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Top Services</p>
+              {liveTopServices.length === 0
+                ? <p className="text-sm text-gray-400">No data yet</p>
+                : liveTopServices.map(([svc, cnt]) => (
+                    <div key={svc} className="flex items-center justify-between text-sm">
+                      <span className="truncate text-gray-700">{svc}</span>
+                      <span className="ml-2 font-bold text-gray-900">{cnt}</span>
+                    </div>
+                  ))}
+            </div>
+          </div>
+        </section>
 
         {/* ── Snapshot / Period Summary ── */}
         <section>

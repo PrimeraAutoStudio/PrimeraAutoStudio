@@ -63,6 +63,57 @@ export default function CheckIn() {
   const [error, setError]                   = useState('')
 
   // ── Loyalty state ──────────────────────────────────────────────────────────
+  // ── Plate autocomplete ────────────────────────────────────────────────────
+  const [plateSuggestions, setPlateSuggestions] = useState<string[]>([])
+  const [showSuggestions, setShowSuggestions]   = useState(false)
+  const plateRef = useRef<HTMLDivElement>(null)
+  const plateDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (plateRef.current && !plateRef.current.contains(e.target as Node))
+        setShowSuggestions(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  async function handlePlateChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = e.target.value.toUpperCase()
+    setForm((prev) => ({ ...prev, plate_number: val }))
+    if (plateDebounce.current) clearTimeout(plateDebounce.current)
+    if (val.length < 2) { setPlateSuggestions([]); setShowSuggestions(false); return }
+    plateDebounce.current = setTimeout(async () => {
+      const { data } = await supabase
+        .from('transactions')
+        .select('plate_number')
+        .ilike('plate_number', `${val}%`)
+        .limit(6)
+      const unique = [...new Set((data ?? []).map((r) => r.plate_number))]
+      setPlateSuggestions(unique)
+      setShowSuggestions(unique.length > 0)
+    }, 300)
+  }
+
+  async function selectPlate(plate: string) {
+    setShowSuggestions(false)
+    // Fetch most recent transaction for this plate to auto-fill make/model
+    const { data } = await supabase
+      .from('transactions')
+      .select('plate_number, make, model')
+      .eq('plate_number', plate)
+      .order('date', { ascending: false })
+      .order('time_in', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    setForm((prev) => ({
+      ...prev,
+      plate_number: plate,
+      make:  data?.make  ?? prev.make,
+      model: data?.model ?? prev.model,
+    }))
+  }
+
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
   const [loyaltyPlate, setLoyaltyPlate]     = useState('')
   const [loyaltyCard, setLoyaltyCard]       = useState<LoyaltyCard | null | 'not_found'>('not_found')
@@ -277,12 +328,29 @@ export default function CheckIn() {
 
         <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
 
-          {/* Plate Number */}
+          {/* Plate Number with autocomplete */}
           <div>
             <label className={labelCls}>Plate Number <span className="text-red-500">*</span></label>
-            <input type="text" name="plate_number" value={form.plate_number}
-              onChange={handleChange} placeholder="e.g. ABC 1234"
-              className={`${inputCls} uppercase placeholder:normal-case`} required />
+            <div ref={plateRef} className="relative">
+              <input type="text" name="plate_number" value={form.plate_number}
+                onChange={handlePlateChange}
+                onFocus={() => plateSuggestions.length > 0 && setShowSuggestions(true)}
+                placeholder="e.g. ABC 1234"
+                className={`${inputCls} uppercase placeholder:normal-case`}
+                autoComplete="off" required />
+              {showSuggestions && plateSuggestions.length > 0 && (
+                <ul className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg">
+                  {plateSuggestions.map((plate) => (
+                    <li key={plate}>
+                      <button type="button" onClick={() => selectPlate(plate)}
+                        className="w-full px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-amber-50 hover:text-[#B8922A]">
+                        {plate}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
 
           {/* Make & Model */}
