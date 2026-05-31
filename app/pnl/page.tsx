@@ -12,15 +12,13 @@ import DateRangeSelector, {
 import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
 import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface Transaction {
   date: string; price: number
   service_name?: string; payment_method?: string; status?: string
 }
 
 interface Expense {
-  id: number; date: string; assignee: string | null; description: string; category: string
+  id: string; date: string; assignee: string | null; description: string; category: string
   amount: number; payment_type: string; notes: string | null
 }
 
@@ -29,9 +27,16 @@ interface ExpenseForm {
   amount: string; payment_type: string; notes: string
 }
 
-interface EmployeeOption { id: number; full_name: string; last_name: string | null }
+interface EditExpenseState {
+  assignee: string
+  description: string
+  category: string
+  amount: string
+  payment_type: string
+  notes: string
+}
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+interface EmployeeOption { id: string; full_name: string; last_name: string | null }
 
 const CATEGORIES    = ['Food', 'Salary', 'Supplies', 'Gas', 'Equipment', 'Misc']
 const PAYMENT_TYPES = ['Cash', 'Online']
@@ -106,8 +111,6 @@ function groupByWeek(dates: string[]): { label: string; dates: string[] }[] {
   return weeks
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
 function SummaryCard({ label, value, color }: { label: string; value: string; color: 'gold' | 'red' | 'green' | 'gray' }) {
   const colorMap = { gold: 'text-[#B8922A]', red: 'text-red-600', green: 'text-green-600', gray: 'text-gray-900' }
   return (
@@ -124,74 +127,44 @@ function CategoryBadge({ category }: { category: string }) {
 }
 
 interface RevBarChartProps {
-  chartDates: string[]
-  chartValues: number[]
-  maxDayRevenue: number
-  todayStr: string
-  labelStep: number
+  chartDates: string[]; chartValues: number[]; maxDayRevenue: number; todayStr: string; labelStep: number
 }
 
 function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: RevBarChartProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   if (chartDates.length === 0) return null
-  const BAR_H = 160
-  const LABEL_H = 24
-  const TOP_PAD = 40
-
-  function fmtAmt(n: number) {
-    return '₱' + Math.round(n).toLocaleString('en-PH')
-  }
+  const BAR_H = 160; const LABEL_H = 24; const TOP_PAD = 40
+  function fmtAmt(n: number) { return '₱' + Math.round(n).toLocaleString('en-PH') }
   function fullDate(iso: string) {
     return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
   }
-
   return (
     <div className="overflow-x-auto">
       <div className="flex items-end gap-[2px]" style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD }}>
         {chartDates.map((dateStr, i) => {
-          const rev = chartValues[i]
-          const isToday = dateStr === todayStr
+          const rev = chartValues[i]; const isToday = dateStr === todayStr
           const barHeight = rev > 0 ? Math.max((rev / maxDayRevenue) * BAR_H, 6) : 2
           const dayNum = parseInt(dateStr.split('-')[2], 10)
           const showDay = i === 0 || i === chartDates.length - 1 || i % labelStep === 0
           const isHovered = hoveredIdx === i
           return (
-            <div
-              key={dateStr}
-              className="relative flex flex-1 flex-col items-center"
-              style={{ height: BAR_H + LABEL_H }}
-              onMouseEnter={() => setHoveredIdx(i)}
-              onMouseLeave={() => setHoveredIdx(null)}
-            >
+            <div key={dateStr} className="relative flex flex-1 flex-col items-center" style={{ height: BAR_H + LABEL_H }}
+              onMouseEnter={() => setHoveredIdx(i)} onMouseLeave={() => setHoveredIdx(null)}>
               {isHovered && (
-                <div
-                  className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] font-medium text-white shadow-lg"
-                  style={{ bottom: LABEL_H + barHeight + 22, left: '50%', transform: 'translateX(-50%)' }}
-                >
+                <div className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] font-medium text-white shadow-lg"
+                  style={{ bottom: LABEL_H + barHeight + 22, left: '50%', transform: 'translateX(-50%)' }}>
                   {fullDate(dateStr)}
                 </div>
               )}
               {rev > 0 && (
-                <span
-                  className="absolute text-[9px] font-semibold text-center leading-none whitespace-nowrap"
-                  style={{ bottom: LABEL_H + barHeight + 3, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}
-                >
+                <span className="absolute text-[9px] font-semibold text-center leading-none whitespace-nowrap"
+                  style={{ bottom: LABEL_H + barHeight + 3, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
                   {fmtAmt(rev)}
                 </span>
               )}
-              <div
-                className="absolute w-full rounded-t transition-opacity duration-100"
-                style={{
-                  bottom: LABEL_H,
-                  height: barHeight,
-                  backgroundColor: rev === 0 ? '#f3f4f6' : isToday ? '#B8922A' : '#EDD98A',
-                  opacity: isHovered ? 0.8 : 1,
-                }}
-              />
-              <span
-                className="absolute bottom-0 text-[10px]"
-                style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}
-              >
+              <div className="absolute w-full rounded-t transition-opacity duration-100"
+                style={{ bottom: LABEL_H, height: barHeight, backgroundColor: rev === 0 ? '#f3f4f6' : isToday ? '#B8922A' : '#EDD98A', opacity: isHovered ? 0.8 : 1 }} />
+              <span className="absolute bottom-0 text-[10px]" style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
                 {showDay ? dayNum : ''}
               </span>
             </div>
@@ -202,37 +175,26 @@ function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelSt
   )
 }
 
-interface DonutChartProps { expenses: Expense[] }
-
-function DonutChart({ expenses }: DonutChartProps) {
+function DonutChart({ expenses }: { expenses: Expense[] }) {
   const [hovered, setHovered] = useState<string | null>(null)
-  if (expenses.length === 0) {
-    return <p className="py-8 text-center text-sm text-gray-400">No expenses for this period.</p>
-  }
+  if (expenses.length === 0) return <p className="py-8 text-center text-sm text-gray-400">No expenses for this period.</p>
   const totals: Record<string, number> = {}
   expenses.forEach((e) => { totals[e.category] = (totals[e.category] ?? 0) + e.amount })
   const total = Object.values(totals).reduce((s, v) => s + v, 0)
   const slices = Object.entries(totals).sort((a, b) => b[1] - a[1])
   const CX = 80, CY = 80, R = 64, INNER = 38
   let cumAngle = -Math.PI / 2
-  function polar(cx: number, cy: number, r: number, angle: number) {
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) }
-  }
+  function polar(cx: number, cy: number, r: number, angle: number) { return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) } }
   const paths = slices.map(([cat, amt]) => {
     const angle = (amt / total) * 2 * Math.PI
-    const startAngle = cumAngle
-    cumAngle += angle
-    const endAngle = cumAngle
+    const startAngle = cumAngle; cumAngle += angle; const endAngle = cumAngle
     const large = angle > Math.PI ? 1 : 0
-    const os = polar(CX, CY, R, startAngle)
-    const oe = polar(CX, CY, R, endAngle)
-    const is = polar(CX, CY, INNER, endAngle)
-    const ie = polar(CX, CY, INNER, startAngle)
+    const os = polar(CX, CY, R, startAngle); const oe = polar(CX, CY, R, endAngle)
+    const is = polar(CX, CY, INNER, endAngle); const ie = polar(CX, CY, INNER, startAngle)
     const d = [`M ${os.x} ${os.y}`, `A ${R} ${R} 0 ${large} 1 ${oe.x} ${oe.y}`, `L ${is.x} ${is.y}`, `A ${INNER} ${INNER} 0 ${large} 0 ${ie.x} ${ie.y}`, 'Z'].join(' ')
     return { cat, amt, d, color: CAT_COLORS[cat] ?? '#9ca3af' }
   })
   const hoveredAmt = hovered ? (totals[hovered] ?? 0) : total
-  const hoveredLabel = hovered ?? 'Total'
   return (
     <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
       <div className="relative shrink-0">
@@ -242,7 +204,7 @@ function DonutChart({ expenses }: DonutChartProps) {
               className="cursor-pointer transition-opacity duration-150"
               onMouseEnter={() => setHovered(cat)} onMouseLeave={() => setHovered(null)} />
           ))}
-          <text x={CX} y={CY - 6} textAnchor="middle" fontSize="9" fill="#6b7280" fontWeight="600">{hoveredLabel}</text>
+          <text x={CX} y={CY - 6} textAnchor="middle" fontSize="9" fill="#6b7280" fontWeight="600">{hovered ?? 'Total'}</text>
           <text x={CX} y={CY + 8} textAnchor="middle" fontSize="10" fill="#111827" fontWeight="700">{formatPHP(hoveredAmt)}</text>
           {hovered && <text x={CX} y={CY + 20} textAnchor="middle" fontSize="8" fill="#B8922A">{((hoveredAmt / total) * 100).toFixed(1)}%</text>}
         </svg>
@@ -263,9 +225,7 @@ function DonutChart({ expenses }: DonutChartProps) {
   )
 }
 
-interface CategoryTrackerProps { expenses: Expense[]; chartDates: string[]; rangeLen: number }
-
-function CategoryTracker({ expenses, chartDates, rangeLen }: CategoryTrackerProps) {
+function CategoryTracker({ expenses, chartDates, rangeLen }: { expenses: Expense[]; chartDates: string[]; rangeLen: number }) {
   const [selected, setSelected] = useState('All')
   const allCats = ['All', ...CATEGORIES.filter((c) => expenses.some((e) => e.category === c))]
   const byWeek = rangeLen > 31
@@ -342,8 +302,6 @@ function CategoryTracker({ expenses, chartDates, rangeLen }: CategoryTrackerProp
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function PnLPage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('this_month'))
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -355,6 +313,16 @@ export default function PnLPage() {
   const [form, setForm] = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
   const [formSaving, setFormSaving] = useState(false)
   const [formError, setFormError] = useState('')
+
+  // Edit expense state
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null)
+  const [editExpense, setEditExpense] = useState<EditExpenseState>({ assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '' })
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  // Delete expense state
+  const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null)
+  const [deletingExpense, setDeletingExpense] = useState(false)
 
   const fetchData = useCallback(async () => {
     if (!range.from || !range.to) return
@@ -370,21 +338,21 @@ export default function PnLPage() {
     if (txErr) console.error('transactions error:', txErr.message)
     if (exErr) console.error('expenses error:', exErr.message)
     setTransactions(tx ?? [])
-    setExpenses(ex ?? [])
-    if (em) setEmployees(em)
+    setExpenses((ex ?? []).map((e) => ({ ...e, id: String(e.id) })))
+    if (em) setEmployees(em.map((e) => ({ ...e, id: String(e.id) })))
     setDataLoading(false)
   }, [range])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const totalRevenue = transactions.reduce((s, t) => s + t.price, 0)
+  const totalRevenue  = transactions.reduce((s, t) => s + t.price, 0)
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
-  const netProfit = totalRevenue - totalExpenses
-  const totalCars = transactions.length
-  const chartDates = range.from && range.to ? datesBetween(range.from, range.to) : []
+  const netProfit     = totalRevenue - totalExpenses
+  const totalCars     = transactions.length
+  const chartDates    = range.from && range.to ? datesBetween(range.from, range.to) : []
   const revenueByDate: Record<string, number> = {}
   transactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
-  const chartValues = chartDates.map((d) => revenueByDate[d] ?? 0)
+  const chartValues   = chartDates.map((d) => revenueByDate[d] ?? 0)
   const maxDayRevenue = Math.max(...chartValues, 1)
   const _td = new Date()
   const todayStr = `${_td.getFullYear()}-${String(_td.getMonth() + 1).padStart(2, '0')}-${String(_td.getDate()).padStart(2, '0')}`
@@ -392,34 +360,24 @@ export default function PnLPage() {
   const labelStep = rangeLen <= 7 ? 1 : rangeLen <= 14 ? 2 : rangeLen <= 31 ? 4 : 7
 
   const KNOWN_FIRST_NAMES = ['Jhun', 'Allen', 'Mik', 'Von', 'Sam', 'Jobert', 'Eugene']
-
   function resolveEmployeeName(firstName: string): string {
     const lc = firstName.toLowerCase()
     const match = employees.find((e) => e.full_name.toLowerCase().startsWith(lc))
     return match ? match.full_name : firstName
   }
-
   const CREW_FOOD_WORDS = ['food', 'breakfast', 'lunch', 'dinner', 'snacks', 'merienda']
-
   function normalise(raw: { description: string; category: string; assignee: string }): { description: string; assignee: string } {
     let { description, category, assignee } = raw
-    const desc = description.trim()
-    const descL = desc.toLowerCase()
-    if (KNOWN_FIRST_NAMES.map((n) => n.toLowerCase()).includes(descL)) {
-      return { description: '', assignee: resolveEmployeeName(desc) }
-    }
-    if (category === 'Salary') {
-      return { description: '', assignee: assignee || desc || '' }
-    }
+    const desc = description.trim(); const descL = desc.toLowerCase()
+    if (KNOWN_FIRST_NAMES.map((n) => n.toLowerCase()).includes(descL)) return { description: '', assignee: resolveEmployeeName(desc) }
+    if (category === 'Salary') return { description: '', assignee: assignee || desc || '' }
     const crewMatch = desc.match(/^crew[\s\-–:]*(.*)$/i)
     if (crewMatch) {
       const rest = crewMatch[1].trim()
       const foodWord = CREW_FOOD_WORDS.find((w) => rest.toLowerCase().includes(w))
       return { description: foodWord ? rest.charAt(0).toUpperCase() + rest.slice(1) : rest || 'Food', assignee: 'Crew' }
     }
-    if (category === 'Supplies' && !assignee) {
-      return { description: desc, assignee: resolveEmployeeName('Eugene') }
-    }
+    if (category === 'Supplies' && !assignee) return { description: desc, assignee: resolveEmployeeName('Eugene') }
     return { description: desc, assignee }
   }
 
@@ -437,8 +395,7 @@ export default function PnLPage() {
   }
 
   async function handleExpenseSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setFormError('')
+    e.preventDefault(); setFormError('')
     if (form.category === 'Salary' && !form.assignee) { setFormError('Assignee is required for Salary expenses.'); return }
     if (form.category !== 'Salary' && !form.description) { setFormError('Description is required.'); return }
     if (!form.amount || !form.date) { setFormError('Date and amount are required.'); return }
@@ -450,9 +407,51 @@ export default function PnLPage() {
     })
     setFormSaving(false)
     if (error) { setFormError(error.message); return }
-    setForm({ ...EMPTY_EXPENSE_FORM, date: form.date })
-    setShowForm(false)
-    fetchData()
+    setForm({ ...EMPTY_EXPENSE_FORM, date: form.date }); setShowForm(false); fetchData()
+  }
+
+  // ── Edit expense ──────────────────────────────────────────────────────────
+
+  function startEditExpense(ex: Expense) {
+    setEditingExpenseId(ex.id)
+    setEditExpense({
+      assignee: ex.assignee ?? '',
+      description: ex.description ?? '',
+      category: ex.category,
+      amount: String(ex.amount),
+      payment_type: ex.payment_type,
+      notes: ex.notes ?? '',
+    })
+    setEditError('')
+  }
+
+  function cancelEditExpense() { setEditingExpenseId(null); setEditError('') }
+
+  async function saveEditExpense(id: string) {
+    setEditSaving(true); setEditError('')
+    const { error } = await supabase.from('expenses').update({
+      assignee: editExpense.assignee || null,
+      description: editExpense.description,
+      category: editExpense.category,
+      amount: parseFloat(editExpense.amount) || 0,
+      payment_type: editExpense.payment_type,
+      notes: editExpense.notes,
+    }).eq('id', id)
+    setEditSaving(false)
+    if (error) { setEditError(error.message); return }
+    setExpenses((prev) => prev.map((e) =>
+      e.id === id ? { ...e, ...editExpense, amount: parseFloat(editExpense.amount) || 0, assignee: editExpense.assignee || null, notes: editExpense.notes || null } : e
+    ))
+    setEditingExpenseId(null)
+  }
+
+  async function deleteExpense(id: string) {
+    setDeletingExpense(true)
+    const { error } = await supabase.from('expenses').delete().eq('id', id)
+    setDeletingExpense(false)
+    if (error) { console.error('delete expense error:', error.message); return }
+    setExpenses((prev) => prev.filter((e) => e.id !== id))
+    setConfirmDeleteExpenseId(null)
   }
 
   async function handleExport(format: ExportFormat) {
@@ -481,6 +480,14 @@ export default function PnLPage() {
 
   const inputCls = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
   const labelCls = 'mb-1 block text-xs font-medium text-gray-600'
+  const editInputCls = 'w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-900 focus:border-[#B8922A] focus:outline-none'
+
+  // Assignee dropdown options
+  const assigneeOptions = [
+    { value: '', label: '— None —' },
+    { value: 'Crew', label: 'Crew' },
+    ...employees.map((emp) => ({ value: emp.full_name, label: emp.full_name })),
+  ]
 
   return (
     <div className="px-6 py-6">
@@ -511,6 +518,7 @@ export default function PnLPage() {
           <p className="py-16 text-center text-gray-400">Loading…</p>
         ) : (
           <div className="space-y-8">
+
             <section className="rounded-2xl bg-white p-6 shadow-sm">
               <h2 className="mb-5 text-base font-semibold text-gray-800">
                 Daily Revenue — <span style={{ color: '#B8922A' }}>{formatRangeLabel(range)}</span>
@@ -534,16 +542,15 @@ export default function PnLPage() {
               </section>
             </div>
 
+            {/* Expense Log */}
             <section className="rounded-2xl bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 className="text-base font-semibold text-gray-800">Expense Log</h2>
-                <button
-                  onClick={() => { setShowForm((v) => !v); setFormError('') }}
+                <button onClick={() => { setShowForm((v) => !v); setFormError('') }}
                   className="rounded-xl px-4 py-2 text-sm font-semibold text-white transition active:scale-95"
                   style={{ backgroundColor: '#B8922A' }}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}
-                >
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
                   {showForm ? 'Cancel' : '+ Log Expense'}
                 </button>
               </div>
@@ -566,12 +573,7 @@ export default function PnLPage() {
                     <div>
                       <label className={labelCls}>Assignee {form.category === 'Salary' && <span className="text-red-500">*</span>}</label>
                       <select name="assignee" value={form.assignee} onChange={handleFormChange} className={inputCls}>
-                        <option value="">— None —</option>
-                        <option value="Crew">Crew</option>
-                        {employees.map((emp) => {
-                          const display = emp.full_name
-                          return <option key={emp.id} value={display}>{display}</option>
-                        })}
+                        {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
                     {form.category !== 'Salary' && (
@@ -616,7 +618,7 @@ export default function PnLPage() {
                 <p className="py-12 text-center text-sm text-gray-400">No expenses logged for this period.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] text-sm">
+                  <table className="w-full min-w-[700px] text-sm">
                     <thead>
                       <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
                         <th className="px-6 py-3">Date</th>
@@ -624,39 +626,135 @@ export default function PnLPage() {
                         <th className="px-6 py-3">Description</th>
                         <th className="px-6 py-3">Category</th>
                         <th className="px-6 py-3">Amount</th>
-                        <th className="px-6 py-3">Payment Type</th>
+                        <th className="px-6 py-3">Payment</th>
                         <th className="px-6 py-3">Notes</th>
+                        <th className="px-6 py-3" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                      {expenses.map((ex) => (
-                        <tr key={ex.id} className="hover:bg-gray-50">
-                          <td className="whitespace-nowrap px-6 py-3 text-gray-500">
-                            {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
-                          </td>
-                          <td className="px-6 py-3 text-gray-700">{ex.assignee || '—'}</td>
-                          <td className="px-6 py-3 font-medium text-gray-800">{ex.description || '—'}</td>
-                          <td className="px-6 py-3"><CategoryBadge category={ex.category} /></td>
-                          <td className="whitespace-nowrap px-6 py-3 font-semibold text-gray-900">{formatPHP(ex.amount)}</td>
-                          <td className="px-6 py-3 text-gray-500">{ex.payment_type}</td>
-                          <td className="px-6 py-3 text-gray-400">{ex.notes || '—'}</td>
-                        </tr>
-                      ))}
+                      {expenses.map((ex) => {
+                        const isEditing = editingExpenseId === ex.id
+                        return (
+                          <tr key={ex.id} className={isEditing ? 'bg-amber-50' : 'hover:bg-gray-50'}>
+                            <td className="whitespace-nowrap px-6 py-3 text-gray-500">
+                              {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </td>
+                            <td className="px-6 py-3">
+                              {isEditing ? (
+                                <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>
+                                  {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              ) : (
+                                <span className="text-gray-700">{ex.assignee || '—'}</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {isEditing ? (
+                                <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
+                              ) : (
+                                <span className="font-medium text-gray-800">{ex.description || '—'}</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {isEditing ? (
+                                <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={editInputCls}>
+                                  {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                                </select>
+                              ) : (
+                                <CategoryBadge category={ex.category} />
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-3">
+                              {isEditing ? (
+                                <input type="number" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
+                              ) : (
+                                <span className="font-semibold text-gray-900">{formatPHP(ex.amount)}</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {isEditing ? (
+                                <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={editInputCls}>
+                                  {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
+                                </select>
+                              ) : (
+                                <span className="text-gray-500">{ex.payment_type}</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {isEditing ? (
+                                <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={editInputCls} placeholder="Notes" />
+                              ) : (
+                                <span className="text-gray-400">{ex.notes || '—'}</span>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-3">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => saveEditExpense(ex.id)} disabled={editSaving}
+                                    className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                                    style={{ backgroundColor: '#B8922A' }}>
+                                    {editSaving ? '…' : 'Save'}
+                                  </button>
+                                  <button onClick={cancelEditExpense}
+                                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100">
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => startEditExpense(ex)}
+                                    className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+                                    style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
+                                    Edit
+                                  </button>
+                                  <button onClick={() => setConfirmDeleteExpenseId(ex.id)}
+                                    className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50">
+                                    Del
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-gray-100">
                         <td colSpan={4} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total</td>
                         <td className="px-6 py-3 font-bold text-gray-900">{formatPHP(totalExpenses)}</td>
-                        <td colSpan={2} />
+                        <td colSpan={3} />
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               )}
+              {editError && <p className="px-6 py-2 text-sm text-red-600">{editError}</p>}
             </section>
           </div>
         )}
       </div>
+
+      {/* Delete expense confirmation */}
+      {confirmDeleteExpenseId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="mb-2 text-base font-bold text-gray-900">Delete Expense</h3>
+            <p className="mb-5 text-sm text-gray-500">Are you sure you want to delete this expense? This cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => deleteExpense(confirmDeleteExpenseId)} disabled={deletingExpense}
+                className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-60">
+                {deletingExpense ? 'Deleting…' : 'Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteExpenseId(null)} disabled={deletingExpense}
+                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
