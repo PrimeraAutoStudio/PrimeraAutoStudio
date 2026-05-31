@@ -28,36 +28,33 @@ interface ExpenseForm {
 }
 
 interface EditExpenseState {
-  assignee: string
-  description: string
-  category: string
-  amount: string
-  payment_type: string
-  notes: string
+  assignee: string; description: string; category: string
+  amount: string; payment_type: string; notes: string
 }
 
 interface EmployeeOption { id: string; full_name: string; last_name: string | null }
+interface Payable { amount: number }
+
+interface KpiTargets {
+  revenue_target: number
+  car_count_target: number
+  expense_budget: number
+  kpi_label: string
+}
 
 const CATEGORIES    = ['Food', 'Salary', 'Supplies', 'Gas', 'Equipment', 'Misc']
 const PAYMENT_TYPES = ['Cash', 'Online']
+const DAILY_QUOTA   = 9.5
 
 const CAT_COLORS: Record<string, string> = {
-  Food:      '#B8922A',
-  Salary:    '#7C5C1E',
-  Supplies:  '#D4AB4E',
-  Gas:       '#A0845C',
-  Equipment: '#6B4F2A',
-  Misc:      '#C4A882',
-  Utilities: '#E8D5A3',
+  Food: '#B8922A', Salary: '#7C5C1E', Supplies: '#D4AB4E',
+  Gas: '#A0845C', Equipment: '#6B4F2A', Misc: '#C4A882', Utilities: '#E8D5A3',
 }
 
 const CAT_BADGE: Record<string, string> = {
-  Food:      'bg-orange-100 text-orange-700',
-  Salary:    'bg-purple-100 text-purple-700',
-  Supplies:  'bg-cyan-100 text-cyan-700',
-  Gas:       'bg-yellow-100 text-yellow-700',
-  Equipment: 'bg-amber-100 text-amber-700',
-  Misc:      'bg-gray-100 text-gray-600',
+  Food: 'bg-orange-100 text-orange-700', Salary: 'bg-purple-100 text-purple-700',
+  Supplies: 'bg-cyan-100 text-cyan-700', Gas: 'bg-yellow-100 text-yellow-700',
+  Equipment: 'bg-amber-100 text-amber-700', Misc: 'bg-gray-100 text-gray-600',
   Utilities: 'bg-lime-100 text-lime-700',
 }
 
@@ -67,8 +64,11 @@ function localToday() {
 }
 
 const EMPTY_EXPENSE_FORM: ExpenseForm = {
-  date: localToday(),
-  assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
+  date: localToday(), assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
+}
+
+const DEFAULT_KPI: KpiTargets = {
+  revenue_target: 0, car_count_target: 0, expense_budget: 0, kpi_label: '',
 }
 
 function formatPHP(n: number) {
@@ -83,15 +83,22 @@ function datesBetween(from: string, to: string): string[] {
   const dates: string[] = []
   const cur = new Date(from + 'T00:00:00')
   const end = new Date(to + 'T00:00:00')
-  while (cur <= end) {
-    dates.push(localIso(cur))
-    cur.setDate(cur.getDate() + 1)
-  }
+  while (cur <= end) { dates.push(localIso(cur)); cur.setDate(cur.getDate() + 1) }
   return dates
 }
 
 function shortDate(iso: string) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
+}
+
+function daysInMonth(year: number, month: number) { return new Date(year, month, 0).getDate() }
+
+function monthBoundsFromDate(dateStr: string) {
+  const d = new Date(dateStr + 'T00:00:00')
+  const year = d.getFullYear(); const month = d.getMonth() + 1
+  const firstOfMonth = `${year}-${String(month).padStart(2, '0')}-01`
+  const lastOfMonth  = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`
+  return { firstOfMonth, lastOfMonth, year, month }
 }
 
 function groupByWeek(dates: string[]): { label: string; dates: string[] }[] {
@@ -102,10 +109,7 @@ function groupByWeek(dates: string[]): { label: string; dates: string[] }[] {
     cur.push(d)
     const dow = new Date(d + 'T00:00:00').getDay()
     const isWeekEnd = dow === 0 || i === dates.length - 1
-    if (isWeekEnd && cur.length) {
-      weeks.push({ label: shortDate(cur[0]), dates: cur })
-      cur = []
-    }
+    if (isWeekEnd && cur.length) { weeks.push({ label: shortDate(cur[0]), dates: cur }); cur = [] }
   })
   if (cur.length) weeks.push({ label: shortDate(cur[0]), dates: cur })
   return weeks
@@ -126,18 +130,12 @@ function CategoryBadge({ category }: { category: string }) {
   return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{category}</span>
 }
 
-interface RevBarChartProps {
+function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: {
   chartDates: string[]; chartValues: number[]; maxDayRevenue: number; todayStr: string; labelStep: number
-}
-
-function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: RevBarChartProps) {
+}) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   if (chartDates.length === 0) return null
   const BAR_H = 160; const LABEL_H = 24; const TOP_PAD = 40
-  function fmtAmt(n: number) { return '₱' + Math.round(n).toLocaleString('en-PH') }
-  function fullDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
-  }
   return (
     <div className="overflow-x-auto">
       <div className="flex items-end gap-[2px]" style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD }}>
@@ -153,13 +151,13 @@ function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelSt
               {isHovered && (
                 <div className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] font-medium text-white shadow-lg"
                   style={{ bottom: LABEL_H + barHeight + 22, left: '50%', transform: 'translateX(-50%)' }}>
-                  {fullDate(dateStr)}
+                  {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}
                 </div>
               )}
               {rev > 0 && (
                 <span className="absolute text-[9px] font-semibold text-center leading-none whitespace-nowrap"
                   style={{ bottom: LABEL_H + barHeight + 3, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
-                  {fmtAmt(rev)}
+                  {'₱' + Math.round(rev).toLocaleString('en-PH')}
                 </span>
               )}
               <div className="absolute w-full rounded-t transition-opacity duration-100"
@@ -230,7 +228,7 @@ function CategoryTracker({ expenses, chartDates, rangeLen }: { expenses: Expense
   const allCats = ['All', ...CATEGORIES.filter((c) => expenses.some((e) => e.category === c))]
   const byWeek = rangeLen > 31
   const buckets = byWeek ? groupByWeek(chartDates) : chartDates.map((d) => ({ label: shortDate(d), dates: [d] }))
-  function sumFor(cat: string, dates: string[]): number {
+  function sumFor(cat: string, dates: string[]) {
     return expenses.filter((e) => dates.includes(e.date) && (cat === 'All' || e.category === cat)).reduce((s, e) => s + e.amount, 0)
   }
   const cats = selected === 'All' ? CATEGORIES.filter((c) => expenses.some((e) => e.category === c)) : [selected]
@@ -302,48 +300,114 @@ function CategoryTracker({ expenses, chartDates, rangeLen }: { expenses: Expense
   )
 }
 
+// KPI Tracker Row Component
+function KpiRow({ label, target, actual, isCurrency = true, higherIsBetter = true }: {
+  label: string; target: number; actual: number; isCurrency?: boolean; higherIsBetter?: boolean
+}) {
+  if (target <= 0) return null
+  const pct = Math.min((actual / target) * 100, 100)
+  const variance = actual - target
+  const isGood = higherIsBetter ? actual >= target : actual <= target
+  const fmt = (n: number) => isCurrency ? formatPHP(n) : n.toLocaleString('en-PH')
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-700">{label}</span>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isGood ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+          {variance >= 0 ? '+' : ''}{fmt(variance)}
+        </span>
+      </div>
+      <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+        <div className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, backgroundColor: isGood ? '#22c55e' : '#ef4444' }} />
+      </div>
+      <div className="flex justify-between text-xs text-gray-500">
+        <span>Actual: <strong className="text-gray-800">{fmt(actual)}</strong></span>
+        <span>{pct.toFixed(1)}% of target</span>
+        <span>Target: <strong className="text-gray-800">{fmt(target)}</strong></span>
+      </div>
+    </div>
+  )
+}
+
 export default function PnLPage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('this_month'))
   const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [expenses, setExpenses] = useState<Expense[]>([])
-  const [dataLoading, setDataLoading] = useState(true)
-  const [employees, setEmployees] = useState<EmployeeOption[]>([])
-  const [exporting, setExporting] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
-  const [formSaving, setFormSaving] = useState(false)
-  const [formError, setFormError] = useState('')
+  const [expenses, setExpenses]         = useState<Expense[]>([])
+  const [payables, setPayables]         = useState<Payable[]>([])
+  const [txMonth, setTxMonth]           = useState<Transaction[]>([])
+  const [dataLoading, setDataLoading]   = useState(true)
+  const [employees, setEmployees]       = useState<EmployeeOption[]>([])
+  const [exporting, setExporting]       = useState(false)
+  const [showForm, setShowForm]         = useState(false)
+  const [form, setForm]                 = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
+  const [formSaving, setFormSaving]     = useState(false)
+  const [formError, setFormError]       = useState('')
 
-  // Edit expense state
+  // KPI targets
+  const [kpiTargets, setKpiTargets]     = useState<KpiTargets>(DEFAULT_KPI)
+  const [kpiEditing, setKpiEditing]     = useState(false)
+  const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
+  const [kpiSaving, setKpiSaving]       = useState(false)
+
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null)
   const [editExpense, setEditExpense] = useState<EditExpenseState>({ assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '' })
-  const [editSaving, setEditSaving] = useState(false)
-  const [editError, setEditError] = useState('')
+  const [editSaving, setEditSaving]   = useState(false)
+  const [editError, setEditError]     = useState('')
 
-  // Delete expense state
   const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null)
   const [deletingExpense, setDeletingExpense] = useState(false)
+
+  const now = new Date()
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   const fetchData = useCallback(async () => {
     if (!range.from || !range.to) return
     setDataLoading(true)
-    const [{ data: tx, error: txErr }, { data: ex, error: exErr }, { data: em }] = await Promise.all([
+    const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
+    const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status')
         .gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
-      supabase.from('expenses')
-        .select('id, date, assignee, description, category, amount, payment_type, notes')
+      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes')
         .gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
+      supabase.from('payables').select('amount'),
+      supabase.from('transactions').select('date, price')
+        .gte('date', firstOfMonth).lte('date', lastOfMonth),
+      supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label').eq('id', '1').single(),
     ])
-    if (txErr) console.error('transactions error:', txErr.message)
-    if (exErr) console.error('expenses error:', exErr.message)
     setTransactions(tx ?? [])
     setExpenses((ex ?? []).map((e) => ({ ...e, id: String(e.id) })))
     if (em) setEmployees(em.map((e) => ({ ...e, id: String(e.id) })))
+    setPayables(pa ?? [])
+    setTxMonth(txM ?? [])
+    if (st) {
+      const kpi = {
+        revenue_target: st.revenue_target ?? 0,
+        car_count_target: st.car_count_target ?? 0,
+        expense_budget: st.expense_budget ?? 0,
+        kpi_label: st.kpi_label ?? '',
+      }
+      setKpiTargets(kpi)
+      setKpiDraft(kpi)
+    }
     setDataLoading(false)
   }, [range])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  async function saveKpiTargets() {
+    setKpiSaving(true)
+    await supabase.from('settings').update({
+      revenue_target: kpiDraft.revenue_target,
+      car_count_target: kpiDraft.car_count_target,
+      expense_budget: kpiDraft.expense_budget,
+      kpi_label: kpiDraft.kpi_label,
+    }).eq('id', '1')
+    setKpiTargets(kpiDraft)
+    setKpiEditing(false)
+    setKpiSaving(false)
+  }
 
   const totalRevenue  = transactions.reduce((s, t) => s + t.price, 0)
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
@@ -354,10 +418,27 @@ export default function PnLPage() {
   transactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
   const chartValues   = chartDates.map((d) => revenueByDate[d] ?? 0)
   const maxDayRevenue = Math.max(...chartValues, 1)
-  const _td = new Date()
-  const todayStr = `${_td.getFullYear()}-${String(_td.getMonth() + 1).padStart(2, '0')}-${String(_td.getDate()).padStart(2, '0')}`
-  const rangeLen = chartDates.length
-  const labelStep = rangeLen <= 7 ? 1 : rangeLen <= 14 ? 2 : rangeLen <= 31 ? 4 : 7
+  const rangeLen      = chartDates.length
+  const labelStep     = rangeLen <= 7 ? 1 : rangeLen <= 14 ? 2 : rangeLen <= 31 ? 4 : 7
+
+  // Breakeven — calendar month of range.from
+  const { year: beYear, month: beMonth } = range.from ? monthBoundsFromDate(range.from) : monthBoundsFromDate(todayStr)
+  const fixedCosts      = payables.reduce((s, p) => s + p.amount, 0)
+  const revenueMonth    = txMonth.reduce((s, t) => s + t.price, 0)
+  const remaining       = Math.max(fixedCosts - revenueMonth, 0)
+  const progressPct     = Math.min((revenueMonth / (fixedCosts || 1)) * 100, 100)
+  const aboveBreakeven  = revenueMonth >= fixedCosts
+  const totalDays       = daysInMonth(beYear, beMonth)
+  const dayOfMonth      = now.getFullYear() === beYear && now.getMonth() + 1 === beMonth ? now.getDate() : totalDays
+  const daysLeft        = Math.max(totalDays - dayOfMonth + 1, 0)
+  const carsMonth       = txMonth.length
+  const totalQuota      = Math.ceil(DAILY_QUOTA * totalDays)
+  const carsStillNeeded = Math.max(totalQuota - carsMonth, 0)
+  const carsPerDayNeeded = daysLeft > 0 ? (carsStillNeeded / daysLeft).toFixed(1) : '0'
+  const beMonthLabel    = new Date(beYear, beMonth - 1, 1).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
+
+  // Net profit target = revenue target - expense budget
+  const netProfitTarget = kpiTargets.revenue_target - kpiTargets.expense_budget
 
   const KNOWN_FIRST_NAMES = ['Jhun', 'Allen', 'Mik', 'Von', 'Sam', 'Jobert', 'Eugene']
   function resolveEmployeeName(firstName: string): string {
@@ -367,7 +448,7 @@ export default function PnLPage() {
   }
   const CREW_FOOD_WORDS = ['food', 'breakfast', 'lunch', 'dinner', 'snacks', 'merienda']
   function normalise(raw: { description: string; category: string; assignee: string }): { description: string; assignee: string } {
-    let { description, category, assignee } = raw
+    const { description, category, assignee } = raw
     const desc = description.trim(); const descL = desc.toLowerCase()
     if (KNOWN_FIRST_NAMES.map((n) => n.toLowerCase()).includes(descL)) return { description: '', assignee: resolveEmployeeName(desc) }
     if (category === 'Salary') return { description: '', assignee: assignee || desc || '' }
@@ -410,18 +491,9 @@ export default function PnLPage() {
     setForm({ ...EMPTY_EXPENSE_FORM, date: form.date }); setShowForm(false); fetchData()
   }
 
-  // ── Edit expense ──────────────────────────────────────────────────────────
-
   function startEditExpense(ex: Expense) {
     setEditingExpenseId(ex.id)
-    setEditExpense({
-      assignee: ex.assignee ?? '',
-      description: ex.description ?? '',
-      category: ex.category,
-      amount: String(ex.amount),
-      payment_type: ex.payment_type,
-      notes: ex.notes ?? '',
-    })
+    setEditExpense({ assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '' })
     setEditError('')
   }
 
@@ -430,18 +502,12 @@ export default function PnLPage() {
   async function saveEditExpense(id: string) {
     setEditSaving(true); setEditError('')
     const { error } = await supabase.from('expenses').update({
-      assignee: editExpense.assignee || null,
-      description: editExpense.description,
-      category: editExpense.category,
-      amount: parseFloat(editExpense.amount) || 0,
-      payment_type: editExpense.payment_type,
-      notes: editExpense.notes,
+      assignee: editExpense.assignee || null, description: editExpense.description, category: editExpense.category,
+      amount: parseFloat(editExpense.amount) || 0, payment_type: editExpense.payment_type, notes: editExpense.notes,
     }).eq('id', id)
     setEditSaving(false)
     if (error) { setEditError(error.message); return }
-    setExpenses((prev) => prev.map((e) =>
-      e.id === id ? { ...e, ...editExpense, amount: parseFloat(editExpense.amount) || 0, assignee: editExpense.assignee || null, notes: editExpense.notes || null } : e
-    ))
+    setExpenses((prev) => prev.map((e) => e.id === id ? { ...e, ...editExpense, amount: parseFloat(editExpense.amount) || 0, assignee: editExpense.assignee || null, notes: editExpense.notes || null } : e))
     setEditingExpenseId(null)
   }
 
@@ -459,9 +525,9 @@ export default function PnLPage() {
     const label = formatRangeLabel(range).replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
     const filename = `primera-pnl-${label}`
     const TX_HEAD = ['Date', 'Price', 'Payment Method', 'Status']
-    const txRows = transactions.map((t) => [t.date, t.price, t.payment_method ?? '', t.status ?? ''])
+    const txRows  = transactions.map((t) => [t.date, t.price, t.payment_method ?? '', t.status ?? ''])
     const EX_HEAD = ['Date', 'Assignee', 'Description', 'Category', 'Amount', 'Payment Type', 'Notes']
-    const exRows = expenses.map((e) => [e.date, e.assignee ?? '', e.description, e.category, e.amount, e.payment_type, e.notes ?? ''])
+    const exRows  = expenses.map((e) => [e.date, e.assignee ?? '', e.description, e.category, e.amount, e.payment_type, e.notes ?? ''])
     const summary = [
       { label: 'Total Revenue', value: formatPHP(totalRevenue) },
       { label: 'Total Expenses', value: formatPHP(totalExpenses) },
@@ -481,10 +547,10 @@ export default function PnLPage() {
   const inputCls = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
   const labelCls = 'mb-1 block text-xs font-medium text-gray-600'
   const editInputCls = 'w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-gray-900 focus:border-[#B8922A] focus:outline-none'
+  const kpiInputCls = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none'
 
-  // Assignee dropdown options
   const assigneeOptions = [
-    { value: '', label: '— None —' },
+    { value: '', label: '—' },
     { value: 'Crew', label: 'Crew' },
     ...employees.map((emp) => ({ value: emp.full_name, label: emp.full_name })),
   ]
@@ -492,6 +558,8 @@ export default function PnLPage() {
   return (
     <div className="px-6 py-6">
       <div className="mx-auto max-w-5xl">
+
+        {/* Header */}
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">P&amp;L Tracker</h1>
@@ -500,6 +568,7 @@ export default function PnLPage() {
           <ExportMenu onExport={handleExport} loading={exporting} />
         </div>
 
+        {/* Date range selector */}
         <div className="mb-6 rounded-2xl bg-white p-4 shadow-sm">
           <DateRangeSelector value={range} onChange={setRange} />
           <p className="mt-2 text-xs text-gray-400">
@@ -507,6 +576,7 @@ export default function PnLPage() {
           </p>
         </div>
 
+        {/* Summary cards */}
         <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <SummaryCard label="Total Revenue"  value={formatPHP(totalRevenue)}  color="gold" />
           <SummaryCard label="Total Expenses" value={formatPHP(totalExpenses)} color="red" />
@@ -519,6 +589,151 @@ export default function PnLPage() {
         ) : (
           <div className="space-y-8">
 
+            {/* ── 1. Breakeven Tracker ── */}
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="mb-4 text-base font-semibold text-gray-800">
+                Breakeven Tracker — <span style={{ color: '#B8922A' }}>{beMonthLabel}</span>
+              </h2>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Monthly Fixed Costs</p>
+                  <p className="text-xl font-bold text-gray-900">{formatPHP(fixedCosts)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue This Month</p>
+                  <p className={`text-xl font-bold ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>{formatPHP(revenueMonth)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    {aboveBreakeven ? 'Above Breakeven By' : 'Still Needed'}
+                  </p>
+                  <p className={`text-xl font-bold ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>
+                    {formatPHP(aboveBreakeven ? revenueMonth - fixedCosts : remaining)}
+                  </p>
+                </div>
+              </div>
+              <div className="mb-1 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full transition-all duration-500"
+                  style={{ width: `${progressPct}%`, backgroundColor: aboveBreakeven ? '#22c55e' : '#ef4444' }} />
+              </div>
+              <div className="mb-5 flex justify-between text-xs text-gray-400">
+                <span>₱0</span>
+                <span>{progressPct.toFixed(1)}% of target</span>
+                <span>{formatPHP(fixedCosts)}</span>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <div>
+                    <span className="font-semibold text-gray-700">Daily quota: </span>
+                    <span className="font-bold" style={{ color: '#B8922A' }}>{DAILY_QUOTA} cars/day</span>
+                  </div>
+                  <div className="hidden h-4 w-px bg-gray-200 sm:block" />
+                  <div>
+                    <span className="font-semibold text-gray-700">Cars still needed: </span>
+                    <span className={`font-bold ${carsStillNeeded === 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {carsStillNeeded === 0 ? 'On track ✓' : `${carsStillNeeded} cars`}
+                    </span>
+                  </div>
+                  <div className="hidden h-4 w-px bg-gray-200 sm:block" />
+                  <div>
+                    <span className="font-semibold text-gray-700">Per day ({daysLeft}d left): </span>
+                    <span className={`font-bold ${parseFloat(carsPerDayNeeded) <= DAILY_QUOTA ? 'text-green-600' : 'text-red-500'}`}>
+                      {carsStillNeeded === 0 ? '—' : `${carsPerDayNeeded}/day`}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ── 2. KPI Tracker ── */}
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-800">KPI Tracker</h2>
+                  {kpiTargets.kpi_label && (
+                    <p className="text-xs text-gray-400 mt-0.5">{kpiTargets.kpi_label}</p>
+                  )}
+                </div>
+                <button onClick={() => { setKpiEditing(!kpiEditing); setKpiDraft(kpiTargets) }}
+                  className="rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors"
+                  style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
+                  {kpiEditing ? 'Cancel' : '✎ Edit Targets'}
+                </button>
+              </div>
+
+              {/* Edit form */}
+              {kpiEditing && (
+                <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide" style={{ color: '#B8922A' }}>
+                    Set KPI Targets
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="sm:col-span-4">
+                      <label className={labelCls}>KPI Period Label (e.g. "June 2026 Targets")</label>
+                      <input type="text" value={kpiDraft.kpi_label}
+                        onChange={(e) => setKpiDraft((d) => ({ ...d, kpi_label: e.target.value }))}
+                        placeholder="e.g. June 2026 Targets" className={kpiInputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Revenue Target (₱)</label>
+                      <input type="number" value={kpiDraft.revenue_target || ''}
+                        onChange={(e) => setKpiDraft((d) => ({ ...d, revenue_target: parseFloat(e.target.value) || 0 }))}
+                        placeholder="e.g. 150000" className={kpiInputCls} min="0" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Car Count Target</label>
+                      <input type="number" value={kpiDraft.car_count_target || ''}
+                        onChange={(e) => setKpiDraft((d) => ({ ...d, car_count_target: parseFloat(e.target.value) || 0 }))}
+                        placeholder="e.g. 300" className={kpiInputCls} min="0" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Expense Budget (₱)</label>
+                      <input type="number" value={kpiDraft.expense_budget || ''}
+                        onChange={(e) => setKpiDraft((d) => ({ ...d, expense_budget: parseFloat(e.target.value) || 0 }))}
+                        placeholder="e.g. 110000" className={kpiInputCls} min="0" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Net Profit Target (auto)</label>
+                      <div className="rounded-lg border border-gray-200 bg-gray-100 px-3 py-2 text-sm text-gray-500">
+                        {kpiDraft.revenue_target > 0 || kpiDraft.expense_budget > 0
+                          ? formatPHP(kpiDraft.revenue_target - kpiDraft.expense_budget)
+                          : '—'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex gap-3">
+                    <button onClick={saveKpiTargets} disabled={kpiSaving}
+                      className="rounded-xl px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                      style={{ backgroundColor: '#B8922A' }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
+                      {kpiSaving ? 'Saving…' : 'Save Targets'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* KPI rows */}
+              {kpiTargets.revenue_target === 0 && kpiTargets.car_count_target === 0 && kpiTargets.expense_budget === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+                  <p className="text-sm text-gray-400">No targets set yet.</p>
+                  <p className="mt-1 text-xs text-gray-400">Click "Edit Targets" to set your KPIs for this period.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <KpiRow label="Revenue" target={kpiTargets.revenue_target} actual={totalRevenue} isCurrency higherIsBetter />
+                  <KpiRow label="Car Count" target={kpiTargets.car_count_target} actual={totalCars} isCurrency={false} higherIsBetter />
+                  <KpiRow label="Expense Budget" target={kpiTargets.expense_budget} actual={totalExpenses} isCurrency higherIsBetter={false} />
+                  {netProfitTarget > 0 && (
+                    <KpiRow label="Net Profit" target={netProfitTarget} actual={netProfit} isCurrency higherIsBetter />
+                  )}
+                </div>
+              )}
+            </section>
+
+            {/* ── 3. Daily Revenue Bar Chart ── */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
               <h2 className="mb-5 text-base font-semibold text-gray-800">
                 Daily Revenue — <span style={{ color: '#B8922A' }}>{formatRangeLabel(range)}</span>
@@ -530,6 +745,7 @@ export default function PnLPage() {
               )}
             </section>
 
+            {/* ── 4. Expense charts ── */}
             <div className="grid gap-8 lg:grid-cols-2">
               <section className="rounded-2xl bg-white p-6 shadow-sm">
                 <h2 className="mb-5 text-base font-semibold text-gray-800">Expenses by Category</h2>
@@ -542,7 +758,7 @@ export default function PnLPage() {
               </section>
             </div>
 
-            {/* Expense Log */}
+            {/* ── 5. Expense Log ── */}
             <section className="rounded-2xl bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 className="text-base font-semibold text-gray-800">Expense Log</h2>
@@ -644,48 +860,36 @@ export default function PnLPage() {
                                 <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>
                                   {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                                 </select>
-                              ) : (
-                                <span className="text-gray-700">{ex.assignee || '—'}</span>
-                              )}
+                              ) : <span className="text-gray-700">{ex.assignee || '—'}</span>}
                             </td>
                             <td className="px-6 py-3">
                               {isEditing ? (
                                 <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
-                              ) : (
-                                <span className="font-medium text-gray-800">{ex.description || '—'}</span>
-                              )}
+                              ) : <span className="font-medium text-gray-800">{ex.description || '—'}</span>}
                             </td>
                             <td className="px-6 py-3">
                               {isEditing ? (
                                 <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={editInputCls}>
                                   {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                                 </select>
-                              ) : (
-                                <CategoryBadge category={ex.category} />
-                              )}
+                              ) : <CategoryBadge category={ex.category} />}
                             </td>
                             <td className="whitespace-nowrap px-6 py-3">
                               {isEditing ? (
                                 <input type="number" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
-                              ) : (
-                                <span className="font-semibold text-gray-900">{formatPHP(ex.amount)}</span>
-                              )}
+                              ) : <span className="font-semibold text-gray-900">{formatPHP(ex.amount)}</span>}
                             </td>
                             <td className="px-6 py-3">
                               {isEditing ? (
                                 <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={editInputCls}>
                                   {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
                                 </select>
-                              ) : (
-                                <span className="text-gray-500">{ex.payment_type}</span>
-                              )}
+                              ) : <span className="text-gray-500">{ex.payment_type}</span>}
                             </td>
                             <td className="px-6 py-3">
                               {isEditing ? (
                                 <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={editInputCls} placeholder="Notes" />
-                              ) : (
-                                <span className="text-gray-400">{ex.notes || '—'}</span>
-                              )}
+                              ) : <span className="text-gray-400">{ex.notes || '—'}</span>}
                             </td>
                             <td className="whitespace-nowrap px-6 py-3">
                               {isEditing ? (
@@ -732,6 +936,7 @@ export default function PnLPage() {
               )}
               {editError && <p className="px-6 py-2 text-sm text-red-600">{editError}</p>}
             </section>
+
           </div>
         )}
       </div>
