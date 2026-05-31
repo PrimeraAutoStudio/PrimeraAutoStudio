@@ -37,7 +37,7 @@ interface PaymentMethodRow { name: string }
 
 interface EditState {
   selectedServices: string[]
-  manualPrice:      string
+  servicePriceOverrides: Record<string, string>  // keyed by service name
   payment_method:   string
   status:           string
   notes:            string
@@ -66,7 +66,7 @@ export default function QueuePage() {
   const [loading, setLoading]     = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '',
+    selectedServices: [], servicePriceOverrides: {}, payment_method: '', status: '', notes: '',
   })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState('')
@@ -143,26 +143,40 @@ export default function QueuePage() {
   // Computed totals for the currently-open edit row
   const editRow     = rows.find((r) => r.id === editingId)
   const sizeForEdit = editRow?.size_category ?? ''
-  const autoTotal   = editState.selectedServices.reduce(
-    (sum, svc) => sum + priceForService(svc, sizeForEdit), 0
+
+  // Resolve the price for a service: use the per-row override if set, else look up from tables
+  function resolvedPrice(svcName: string): number {
+    const ov = editState.servicePriceOverrides[svcName]
+    if (ov !== undefined && ov !== '') return parseFloat(ov) || 0
+    return priceForService(svcName, sizeForEdit)
+  }
+
+  const effectivePrice = editState.selectedServices.reduce(
+    (sum, svc) => sum + resolvedPrice(svc), 0
   )
-  const effectivePrice =
-    editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
   // ── Inline edit ────────────────────────────────────────────────────────────
 
   function startEdit(row: Transaction) {
-    // Seed selected services from the saved comma-separated service_name
     const seeded = row.service_name
       ? row.service_name.split(',').map((s) => s.trim()).filter(Boolean)
       : []
+
+    // Seed per-service overrides: if there's only one service, put the full saved
+    // price on it so staff immediately see what was charged. For multiple services
+    // leave the overrides blank so the lookup values show as the default.
+    const overrides: Record<string, string> = {}
+    if (seeded.length === 1) {
+      overrides[seeded[0]] = String(row.price)
+    }
+
     setEditingId(row.id)
     setEditState({
-      selectedServices: seeded,
-      manualPrice:      String(row.price),
-      payment_method:   row.payment_method,
-      status:           row.status,
-      notes:            row.notes ?? '',
+      selectedServices:      seeded,
+      servicePriceOverrides: overrides,
+      payment_method:        row.payment_method,
+      status:                row.status,
+      notes:                 row.notes ?? '',
     })
     setSaveError('')
   }
