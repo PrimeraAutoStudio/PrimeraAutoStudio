@@ -3,6 +3,8 @@
  *  No server required.
  * ──────────────────────────────────────────────────────────────────────────── */
 
+import * as XLSX from 'xlsx'
+
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 
 function escapeCsv(v: unknown): string {
@@ -14,9 +16,17 @@ function escapeCsv(v: unknown): string {
 }
 
 export function downloadCsv(rows: unknown[][], filename: string) {
-  const csv = rows.map((r) => r.map(escapeCsv).join(',')).join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-  triggerDownload(blob, filename)
+  const csv     = rows.map((r) => r.map(escapeCsv).join(',')).join('\n')
+  // UTF-8 BOM so Excel opens peso signs correctly
+  const blob    = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url     = URL.createObjectURL(blob)
+  const link    = document.createElement('a')
+  link.href     = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 // ─── Excel (SheetJS) ─────────────────────────────────────────────────────────
@@ -25,8 +35,7 @@ export async function downloadXlsx(
   sheets: { name: string; rows: unknown[][] }[],
   filename: string
 ) {
-  const XLSX = (await import('xlsx')).default
-  const wb   = XLSX.utils.book_new()
+  const wb = XLSX.utils.book_new()
   for (const { name, rows } of sheets) {
     const ws = XLSX.utils.aoa_to_sheet(rows)
     XLSX.utils.book_append_sheet(wb, ws, name)
@@ -34,12 +43,12 @@ export async function downloadXlsx(
   XLSX.writeFile(wb, filename)
 }
 
-// ─── PDF (jsPDF + autoTable) ─────────────────────────────────────────────────
+// ─── PDF (jsPDF + jspdf-autotable) ───────────────────────────────────────────
 
 export interface PdfSection {
-  title:   string
-  head:    string[]
-  rows:    unknown[][]
+  title:    string
+  head:     string[]
+  rows:     unknown[][]
   summary?: { label: string; value: string }[]
 }
 
@@ -54,13 +63,14 @@ export async function downloadPdf(
   sections:  PdfSection[],
   filename:  string
 ) {
-  const { default: jsPDF }    = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  // jsPDF v4 exports the constructor as both named + default
+  const { jsPDF }    = await import('jspdf')
+  const { autoTable } = await import('jspdf-autotable')
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const W   = doc.internal.pageSize.getWidth()
 
-  // ── Header bar ──────────────────────────────────────────────────────────────
+  // ── Gold header bar ────────────────────────────────────────────────────────
   doc.setFillColor(...GOLD)
   doc.rect(0, 0, W, 18, 'F')
   doc.setFont('helvetica', 'bold')
@@ -70,12 +80,12 @@ export async function downloadPdf(
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.text(pageTitle, W / 2, 11, { align: 'center' })
-  doc.text(subtitle, W - 12, 11, { align: 'right' })
+  doc.text(subtitle,  W - 12, 11, { align: 'right' })
 
   let y = 24
 
   for (const section of sections) {
-    // Section title
+    // Section heading
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.setTextColor(...DARK)
@@ -101,7 +111,7 @@ export async function downloadPdf(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     y = ((doc as any).lastAutoTable?.finalY ?? y) + 4
 
-    // Summary rows
+    // Optional summary block
     if (section.summary?.length) {
       for (const { label, value } of section.summary) {
         doc.setFont('helvetica', 'bold')
@@ -117,7 +127,7 @@ export async function downloadPdf(
     y += 6
   }
 
-  // Footer
+  // Footer timestamp
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7)
   doc.setTextColor(150, 150, 150)
@@ -128,15 +138,4 @@ export async function downloadPdf(
   )
 
   doc.save(filename)
-}
-
-// ─── Shared trigger ───────────────────────────────────────────────────────────
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a   = document.createElement('a')
-  a.href    = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
 }
