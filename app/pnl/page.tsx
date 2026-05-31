@@ -253,8 +253,8 @@ export default function PnLPage() {
                                 : isToday
                                 ? '#B8922A'
                                 : '#EDD98A',
+                              height: rev === 0 ? '2px' : `${heightPct}%`,
                             }}
-                            style={{ height: rev === 0 ? '2px' : `${heightPct}%` }}
                           />
                         </div>
                         {/* Day label — show every 5th + day 1 */}
