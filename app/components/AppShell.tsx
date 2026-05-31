@@ -102,7 +102,7 @@ const MAIN_NAV = [
   { href: '/dashboard', label: 'Dashboard',     Icon: IconDashboard },
   { href: '/checkin',   label: 'Check In',      Icon: IconCheckIn   },
   { href: '/queue',     label: 'Queue',         Icon: IconQueue     },
-  { href: '/pnl',       label: 'P&L',           Icon: IconPnL       },
+  { href: '/pnl',       label: 'P&L Tracker',   Icon: IconPnL       },
   { href: '/loyalty',   label: 'Primera Circle', Icon: IconLoyalty  },
   { href: '/promos',    label: 'Promos',         Icon: IconPromos   },
 ] as const

@@ -464,19 +464,6 @@ function CategoryTracker({ expenses, chartDates, rangeLen }: CategoryTrackerProp
 export default function PnLPage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('this_month'))
 
-  // Each chart section has its own independent range + data
-  const [chartRange, setChartRange]               = useState<DateRange>(rangeForPreset('this_month'))
-  const [chartTransactions, setChartTransactions] = useState<Transaction[]>([])
-  const [chartLoading, setChartLoading]           = useState(true)
-
-  const [donutRange, setDonutRange]               = useState<DateRange>(rangeForPreset('this_month'))
-  const [donutExpenses, setDonutExpenses]         = useState<Expense[]>([])
-  const [donutLoading, setDonutLoading]           = useState(true)
-
-  const [trackerRange, setTrackerRange]           = useState<DateRange>(rangeForPreset('this_month'))
-  const [trackerExpenses, setTrackerExpenses]     = useState<Expense[]>([])
-  const [trackerLoading, setTrackerLoading]       = useState(true)
-
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [expenses, setExpenses]         = useState<Expense[]>([])
   const [dataLoading, setDataLoading]   = useState(true)
@@ -505,8 +492,14 @@ export default function PnLPage() {
         .eq('is_active', true)
         .order('full_name'),
     ])
-    if (txErr) console.error('transactions:', txErr.message)
-    if (exErr) console.error('expenses:', exErr.message)
+    if (txErr) console.error('[expenses fetch] transactions error:', txErr.message)
+    if (exErr) console.error('[expenses fetch] expenses error:', exErr.message)
+
+    console.log('[expenses fetch] range:', range.from, '→', range.to)
+    console.log('[expenses fetch] raw expenses data:', ex)
+    console.log('[expenses fetch] expenses count:', ex?.length ?? 0)
+    console.log('[expenses fetch] expenses error:', exErr)
+
     setTransactions(tx ?? [])
     setExpenses(ex ?? [])
     if (em) setEmployees(em)
@@ -515,92 +508,117 @@ export default function PnLPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // ── Fetch — chart-specific transactions ────────────────────────────────────
-
-  const fetchChartData = useCallback(async () => {
-    if (!chartRange.from || !chartRange.to) return
-    setChartLoading(true)
-    const { data, error } = await supabase
-      .from('transactions').select('date, price')
-      .gte('date', chartRange.from).lte('date', chartRange.to)
-    if (error) console.error('chart transactions:', error.message)
-    setChartTransactions(data ?? [])
-    setChartLoading(false)
-  }, [chartRange])
-
-  useEffect(() => { fetchChartData() }, [fetchChartData])
-
-  const fetchDonutData = useCallback(async () => {
-    if (!donutRange.from || !donutRange.to) return
-    setDonutLoading(true)
-    const { data, error } = await supabase
-      .from('expenses')
-      .select('id, date, assignee, description, category, amount, payment_type, notes')
-      .gte('date', donutRange.from).lte('date', donutRange.to)
-    if (error) console.error('donut expenses:', error.message)
-    setDonutExpenses(data ?? [])
-    setDonutLoading(false)
-  }, [donutRange])
-
-  useEffect(() => { fetchDonutData() }, [fetchDonutData])
-
-  const fetchTrackerData = useCallback(async () => {
-    if (!trackerRange.from || !trackerRange.to) return
-    setTrackerLoading(true)
-    const { data, error } = await supabase
-      .from('expenses')
-      .select('id, date, assignee, description, category, amount, payment_type, notes')
-      .gte('date', trackerRange.from).lte('date', trackerRange.to)
-    if (error) console.error('tracker expenses:', error.message)
-    setTrackerExpenses(data ?? [])
-    setTrackerLoading(false)
-  }, [trackerRange])
-
-  useEffect(() => { fetchTrackerData() }, [fetchTrackerData])
-
-  // ── Summary stats (uses main range) ────────────────────────────────────────
+  // ── Summary stats ─────────────────────────────────────────────────────────
 
   const totalRevenue  = transactions.reduce((s, t) => s + t.price, 0)
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
   const netProfit     = totalRevenue - totalExpenses
   const totalCars     = transactions.length
 
-  // ── Bar chart data (uses chartRange / chartTransactions) ───────────────────
+  // ── Bar chart + tracker data (all use the single `range`) ────────────────
 
-  const chartDates    = chartRange.from && chartRange.to ? datesBetween(chartRange.from, chartRange.to) : []
+  const chartDates    = range.from && range.to ? datesBetween(range.from, range.to) : []
   const revenueByDate: Record<string, number> = {}
-  chartTransactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
+  transactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
   const chartValues   = chartDates.map((d) => revenueByDate[d] ?? 0)
   const maxDayRevenue = Math.max(...chartValues, 1)
   const _td = new Date()
   const todayStr = `${_td.getFullYear()}-${String(_td.getMonth() + 1).padStart(2, '0')}-${String(_td.getDate()).padStart(2, '0')}`
-  const rangeLen      = chartDates.length
+  const rangeLen = chartDates.length
 
   const labelStep = rangeLen <= 7 ? 1
     : rangeLen <= 14 ? 2
     : rangeLen <= 31 ? 4
     : 7
 
-  // ── Tracker date array (uses trackerRange) ─────────────────────────────────
+  // ── Expense form helpers ──────────────────────────────────────────────────
 
-  const trackerDates  = trackerRange.from && trackerRange.to ? datesBetween(trackerRange.from, trackerRange.to) : []
-  const trackerRangeLen = trackerDates.length
+  // Known first names that map to employees — used for auto-detection
+  const KNOWN_FIRST_NAMES = ['Jhun', 'Allen', 'Mik', 'Von', 'Sam', 'Jobert', 'Eugene']
 
-  // ── Expense form ───────────────────────────────────────────────────────────
+  // Resolve a bare first name to the matching employee's full name (or return as-is)
+  function resolveEmployeeName(firstName: string): string {
+    const lc = firstName.toLowerCase()
+    const match = employees.find(
+      (e) => e.full_name.toLowerCase().startsWith(lc)
+    )
+    return match
+      ? [match.full_name, match.last_name].filter(Boolean).join(' ')
+      : firstName
+  }
+
+  // Food keywords that follow "Crew"
+  const CREW_FOOD_WORDS = ['food', 'breakfast', 'lunch', 'dinner', 'snacks', 'merienda']
+
+  // Normalise a raw description+category pair before saving
+  function normalise(raw: { description: string; category: string; assignee: string }): {
+    description: string; assignee: string
+  } {
+    let { description, category, assignee } = raw
+    const desc  = description.trim()
+    const descL = desc.toLowerCase()
+
+    // Rule 1 — description is just a known first name → move to assignee
+    if (KNOWN_FIRST_NAMES.map((n) => n.toLowerCase()).includes(descL)) {
+      return { description: '', assignee: resolveEmployeeName(desc) }
+    }
+
+    // Rule 2 — category is Salary → blank description, keep assignee
+    if (category === 'Salary') {
+      return { description: '', assignee: assignee || desc || '' }
+    }
+
+    // Rule 3 — description starts with "Crew" (various formats)
+    const crewMatch = desc.match(/^crew[\s\-–:]*(.*)$/i)
+    if (crewMatch) {
+      const rest = crewMatch[1].trim()
+      // keep the food word, capitalise first letter
+      const foodWord = CREW_FOOD_WORDS.find((w) => rest.toLowerCase().includes(w))
+      return {
+        description: foodWord
+          ? rest.charAt(0).toUpperCase() + rest.slice(1)
+          : rest || 'Food',
+        assignee: 'Crew',
+      }
+    }
+
+    // Rule 4 — category is Supplies → auto-assign to Eugene
+    if (category === 'Supplies' && !assignee) {
+      const eugene = resolveEmployeeName('Eugene')
+      return { description: desc, assignee: eugene }
+    }
+
+    return { description: desc, assignee }
+  }
 
   function handleFormChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
     const { name, value } = e.target
 
-    // Auto-split "Description - Name" pattern when the description field loses focus
-    // e.g. "Salary - Jhun" → description="Salary", assignee="Jhun"
-    if (name === 'description' && value.includes(' - ')) {
-      const dashIdx = value.indexOf(' - ')
-      const descPart = value.slice(0, dashIdx).trim()
-      const namePart = value.slice(dashIdx + 3).trim()
-      if (namePart) {
-        setForm((f) => ({ ...f, description: descPart, assignee: f.assignee || namePart }))
+    if (name === 'category') {
+      // Salary → clear description, mark assignee required
+      if (value === 'Salary') {
+        setForm((f) => ({ ...f, category: value, description: '' }))
+        return
+      }
+      // Supplies → auto-assign to Eugene if no assignee yet
+      if (value === 'Supplies') {
+        setForm((f) => ({
+          ...f,
+          category: value,
+          assignee: f.assignee || resolveEmployeeName('Eugene'),
+        }))
+        return
+      }
+    }
+
+    if (name === 'description') {
+      // Crew prefix → auto-set assignee, strip prefix from description
+      const crewMatch = value.match(/^crew[\s\-–:]*(.*)$/i)
+      if (crewMatch) {
+        const rest = crewMatch[1].trim()
+        setForm((f) => ({ ...f, description: rest, assignee: 'Crew' }))
         return
       }
     }
@@ -611,19 +629,37 @@ export default function PnLPage() {
   async function handleExpenseSubmit(e: React.FormEvent) {
     e.preventDefault()
     setFormError('')
-    if (!form.description || !form.amount || !form.date) {
-      setFormError('Date, description, and amount are required.')
+
+    // Salary requires assignee; other categories require description
+    if (form.category === 'Salary' && !form.assignee) {
+      setFormError('Assignee is required for Salary expenses.')
       return
     }
+    if (form.category !== 'Salary' && !form.description) {
+      setFormError('Description is required.')
+      return
+    }
+    if (!form.amount || !form.date) {
+      setFormError('Date and amount are required.')
+      return
+    }
+
+    // Apply normalisation rules before saving
+    const { description: normDesc, assignee: normAssignee } = normalise({
+      description: form.description,
+      category:    form.category,
+      assignee:    form.assignee,
+    })
+
     setFormSaving(true)
     const { error } = await supabase.from('expenses').insert({
-      date: form.date,
-      assignee: form.assignee || null,
-      description: form.description,
-      category: form.category,
-      amount: parseFloat(form.amount),
+      date:         form.date,
+      assignee:     normAssignee || null,
+      description:  normDesc,
+      category:     form.category,
+      amount:       parseFloat(form.amount),
       payment_type: form.payment_type,
-      notes: form.notes,
+      notes:        form.notes,
     })
     setFormSaving(false)
     if (error) { setFormError(error.message); return }
@@ -711,21 +747,11 @@ export default function PnLPage() {
 
             {/* ── 1. Daily Revenue Bar Chart ── */}
             <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <h2 className="text-base font-semibold text-gray-800">
-                  Daily Revenue —{' '}
-                  <span style={{ color: '#B8922A' }}>{formatRangeLabel(chartRange)}</span>
-                </h2>
-              </div>
-
-              {/* Chart-specific date range selector */}
-              <div className="mb-5 rounded-xl bg-gray-50 px-4 py-3">
-                <DateRangeSelector value={chartRange} onChange={setChartRange} />
-              </div>
-
-              {chartLoading ? (
-                <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
-              ) : chartValues.every((v) => v === 0) ? (
+              <h2 className="mb-5 text-base font-semibold text-gray-800">
+                Daily Revenue —{' '}
+                <span style={{ color: '#B8922A' }}>{formatRangeLabel(range)}</span>
+              </h2>
+              {chartValues.every((v) => v === 0) ? (
                 <p className="py-8 text-center text-sm text-gray-400">No revenue recorded for this period.</p>
               ) : (
                 <RevBarChart
@@ -743,45 +769,21 @@ export default function PnLPage() {
 
               {/* 2a. Expense Donut */}
               <section className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="mb-3 text-base font-semibold text-gray-800">
-                  Expenses by Category —{' '}
-                  <span className="text-sm font-normal" style={{ color: '#B8922A' }}>
-                    {formatRangeLabel(donutRange)}
-                  </span>
-                </h2>
-                <div className="mb-4 rounded-xl bg-gray-50 px-4 py-3">
-                  <DateRangeSelector value={donutRange} onChange={setDonutRange} />
-                </div>
-                {donutLoading ? (
-                  <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
-                ) : (
-                  <DonutChart expenses={donutExpenses} />
-                )}
+                <h2 className="mb-5 text-base font-semibold text-gray-800">Expenses by Category</h2>
+                <DonutChart expenses={expenses} />
               </section>
 
               {/* 2b. Category Tracker */}
               <section className="rounded-2xl bg-white p-6 shadow-sm">
-                <h2 className="mb-3 text-base font-semibold text-gray-800">
-                  Category Tracker —{' '}
-                  <span className="text-sm font-normal" style={{ color: '#B8922A' }}>
-                    {formatRangeLabel(trackerRange)}
-                  </span>
-                </h2>
-                <div className="mb-3 rounded-xl bg-gray-50 px-4 py-3">
-                  <DateRangeSelector value={trackerRange} onChange={setTrackerRange} />
-                </div>
+                <h2 className="mb-1 text-base font-semibold text-gray-800">Category Tracker</h2>
                 <p className="mb-4 text-xs text-gray-400">
-                  {trackerRangeLen > 31 ? 'Grouped by week' : 'Day-by-day spending per category'}
+                  {rangeLen > 31 ? 'Grouped by week' : 'Day-by-day spending per category'}
                 </p>
-                {trackerLoading ? (
-                  <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
-                ) : (
-                  <CategoryTracker
-                    expenses={trackerExpenses}
-                    chartDates={trackerDates}
-                    rangeLen={trackerRangeLen}
-                  />
-                )}
+                <CategoryTracker
+                  expenses={expenses}
+                  chartDates={chartDates}
+                  rangeLen={rangeLen}
+                />
               </section>
             </div>
 
@@ -805,40 +807,61 @@ export default function PnLPage() {
                   style={{ borderColor: 'rgba(184,146,42,0.2)', backgroundColor: 'rgba(184,146,42,0.05)' }}>
                   <p className="mb-4 text-sm font-semibold" style={{ color: '#B8922A' }}>New Expense</p>
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                    {/* Date */}
                     <div>
                       <label className={labelCls}>Date <span className="text-red-500">*</span></label>
                       <input type="date" name="date" value={form.date} onChange={handleFormChange} className={inputCls} required />
                     </div>
-                    <div>
-                      <label className={labelCls}>Assignee</label>
-                      <select name="assignee" value={form.assignee} onChange={handleFormChange} className={inputCls}>
-                        <option value="">— None —</option>
-                        {employees.map((emp) => {
-                          const display = [emp.full_name, emp.last_name].filter(Boolean).join(' ')
-                          return <option key={emp.id} value={display}>{display}</option>
-                        })}
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Description <span className="text-red-500">*</span></label>
-                      <input type="text" name="description" value={form.description} onChange={handleFormChange} placeholder="e.g. Gas, Food, Cash Advance" className={inputCls} required />
-                    </div>
+
+                    {/* Category */}
                     <div>
                       <label className={labelCls}>Category</label>
                       <select name="category" value={form.category} onChange={handleFormChange} className={inputCls}>
                         {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                       </select>
                     </div>
+
+                    {/* Assignee — required for Salary */}
+                    <div>
+                      <label className={labelCls}>
+                        Assignee {form.category === 'Salary' && <span className="text-red-500">*</span>}
+                      </label>
+                      <select name="assignee" value={form.assignee} onChange={handleFormChange} className={inputCls}>
+                        <option value="">— None —</option>
+                        <option value="Crew">Crew</option>
+                        {employees.map((emp) => {
+                          const display = [emp.full_name, emp.last_name].filter(Boolean).join(' ')
+                          return <option key={emp.id} value={display}>{display}</option>
+                        })}
+                      </select>
+                    </div>
+
+                    {/* Description — hidden for Salary */}
+                    {form.category !== 'Salary' && (
+                      <div>
+                        <label className={labelCls}>Description <span className="text-red-500">*</span></label>
+                        <input type="text" name="description" value={form.description}
+                          onChange={handleFormChange}
+                          placeholder="e.g. Gas, Food, Cash Advance"
+                          className={inputCls} />
+                      </div>
+                    )}
+
+                    {/* Amount */}
                     <div>
                       <label className={labelCls}>Amount (₱) <span className="text-red-500">*</span></label>
                       <input type="number" name="amount" value={form.amount} onChange={handleFormChange} placeholder="0.00" min="0" step="0.01" className={inputCls} required />
                     </div>
+
+                    {/* Payment Type */}
                     <div>
                       <label className={labelCls}>Payment Type</label>
                       <select name="payment_type" value={form.payment_type} onChange={handleFormChange} className={inputCls}>
                         {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
                       </select>
                     </div>
+
+                    {/* Notes */}
                     <div className="col-span-2 sm:col-span-3">
                       <label className={labelCls}>Notes</label>
                       <input type="text" name="notes" value={form.notes} onChange={handleFormChange} placeholder="Optional notes…" className={inputCls} />
@@ -884,7 +907,9 @@ export default function PnLPage() {
                             {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
                           </td>
                           <td className="px-6 py-3 text-gray-700">{ex.assignee || '—'}</td>
-                          <td className="px-6 py-3 font-medium text-gray-800">{ex.description}</td>
+                          <td className="px-6 py-3 font-medium text-gray-800">
+                            {ex.description || '—'}
+                          </td>
                           <td className="px-6 py-3"><CategoryBadge category={ex.category} /></td>
                           <td className="whitespace-nowrap px-6 py-3 font-semibold text-gray-900">{formatPHP(ex.amount)}</td>
                           <td className="px-6 py-3 text-gray-500">{ex.payment_type}</td>
