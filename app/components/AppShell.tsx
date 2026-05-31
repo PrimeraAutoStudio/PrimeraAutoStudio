@@ -1,5 +1,6 @@
 'use client'
 
+import { ReactElement } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -115,7 +116,7 @@ const BOTTOM_NAV = [
 function NavLink({
   href, label, Icon, pathname,
 }: {
-  href: string; label: string; Icon: () => JSX.Element; pathname: string
+  href: string; label: string; Icon: () => ReactElement; pathname: string
 }) {
   const active = pathname === href || pathname.startsWith(href + '/')
   return (
