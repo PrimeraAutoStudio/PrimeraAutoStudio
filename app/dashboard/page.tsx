@@ -17,11 +17,6 @@ interface Transaction {
   service_name: string; payment_method: string
 }
 
-interface Payable { amount: number }
-
-const DAILY_QUOTA = 9.5
-const DAY_NAMES   = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
 const PAYMENT_COLORS: Record<string, string> = {
   Cash: '#B8922A', GCash: '#3b82f6', Maya: '#22c55e', BPI: '#a855f7',
 }
@@ -34,20 +29,6 @@ function isoDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function daysInMonth(year: number, month: number) {
-  return new Date(year, month, 0).getDate()
-}
-
-function monthBoundsFromRange(from: string) {
-  const d = new Date(from + 'T00:00:00')
-  const year  = d.getFullYear()
-  const month = d.getMonth() + 1
-  const firstOfMonth = `${year}-${String(month).padStart(2, '0')}-01`
-  const lastOfMonth  = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`
-  return { firstOfMonth, lastOfMonth, year, month }
-}
-
-// Get all dates between from and to
 function datesBetween(from: string, to: string): string[] {
   const dates: string[] = []
   const cur = new Date(from + 'T00:00:00')
@@ -57,17 +38,6 @@ function datesBetween(from: string, to: string): string[] {
     cur.setDate(cur.getDate() + 1)
   }
   return dates
-}
-
-// Get Mon-Sun of week containing the given date
-function weekDaysForDate(dateStr: string): Date[] {
-  const base = new Date(dateStr + 'T00:00:00')
-  const dow  = base.getDay()
-  const mon  = new Date(base)
-  mon.setDate(base.getDate() - ((dow + 6) % 7))
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(mon); d.setDate(mon.getDate() + i); return d
-  })
 }
 
 function StatCard({ label, value, sub, accent = false }: {
@@ -92,12 +62,10 @@ export default function DashboardPage() {
 
   const [range, setRange]         = useState<DateRange>(rangeForPreset('today'))
   const [txRange, setTxRange]     = useState<Transaction[]>([])
-  const [txMonth, setTxMonth]     = useState<Transaction[]>([])
-  const [payables, setPayables]   = useState<Payable[]>([])
   const [loading, setLoading]     = useState(true)
   const [exporting, setExporting] = useState(false)
 
-  // Live stats — always today, auto-refreshes every 30s
+  // Live stats — always today
   const [liveTx, setLiveTx]           = useState<Transaction[]>([])
   const [liveLoading, setLiveLoading] = useState(true)
 
@@ -116,7 +84,6 @@ export default function DashboardPage() {
     return () => clearInterval(id)
   }, [fetchLive])
 
-  // Live stats derived
   const liveCars    = liveTx.length
   const liveRevenue = liveTx.reduce((s, t) => s + t.price, 0)
   const liveOnHand  = liveTx.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
@@ -128,108 +95,70 @@ export default function DashboardPage() {
   })
   const liveTopServices = Object.entries(liveSvcMap).sort((a, b) => b[1] - a[1]).slice(0, 3)
 
-  // Month bounds for breakeven tracker
-  const { firstOfMonth, lastOfMonth, year, month } =
-    range.from ? monthBoundsFromRange(range.from) : monthBoundsFromRange(todayStr)
-
-  // Fetch all data for selected range + month for breakeven
+  // Fetch selected range
   useEffect(() => {
     if (!range.from || !range.to) return
     async function load() {
       setLoading(true)
-      const [{ data: txR }, { data: txM }, { data: pa }] = await Promise.all([
-        supabase.from('transactions')
-          .select('date, price, status, service_name, payment_method')
-          .gte('date', range.from).lte('date', range.to),
-        supabase.from('transactions')
-          .select('date, price, status, service_name, payment_method')
-          .gte('date', firstOfMonth).lte('date', lastOfMonth),
-        supabase.from('payables').select('amount'),
-      ])
+      const { data: txR } = await supabase
+        .from('transactions')
+        .select('date, price, status, service_name, payment_method')
+        .gte('date', range.from).lte('date', range.to)
       setTxRange(txR ?? [])
-      setTxMonth(txM ?? [])
-      setPayables(pa ?? [])
       setLoading(false)
     }
     load()
-  }, [range, firstOfMonth, lastOfMonth])
+  }, [range])
 
-  // Snapshot stats from selected range
-  const isSingleDay     = range.from === range.to
-  const snapshotLabel   = isSingleDay ? "Today's Snapshot" : 'Period Summary'
-  const carLabel        = isSingleDay ? 'Cars Today' : 'Total Cars'
-  const revLabel        = isSingleDay ? 'Revenue Today' : 'Total Revenue'
-  const totalCars       = txRange.length
-  const totalRevenue    = txRange.reduce((s, t) => s + t.price, 0)
-  const onHandTotal     = txRange.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
-  const depositedTotal  = txRange.filter((t) => t.status === 'Deposited').reduce((s, t) => s + t.price, 0)
+  // Snapshot stats
+  const isSingleDay    = range.from === range.to
+  const snapshotLabel  = isSingleDay ? "Today's Snapshot" : 'Period Summary'
+  const carLabel       = isSingleDay ? 'Cars Today' : 'Total Cars'
+  const revLabel       = isSingleDay ? 'Revenue Today' : 'Total Revenue'
+  const totalCars      = txRange.length
+  const totalRevenue   = txRange.reduce((s, t) => s + t.price, 0)
+  const onHandTotal    = txRange.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
+  const depositedTotal = txRange.filter((t) => t.status === 'Deposited').reduce((s, t) => s + t.price, 0)
 
-  // ── Weekly chart — follows global range ──────────────────────────────────
-  // If range is <= 7 days, show those days. If longer, show Mon-Sun of week containing range.from
-  const rangeDates = range.from && range.to ? datesBetween(range.from, range.to) : []
-  const showWeekChart = rangeDates.length <= 7
-
-  // For <= 7 days: use the range dates directly
-  // For > 7 days: use Mon-Sun of week containing range.from
-  const weekDays = showWeekChart
-    ? rangeDates.map((d) => new Date(d + 'T00:00:00'))
-    : weekDaysForDate(range.from || todayStr)
-
-  const weekDayStrs = weekDays.map((d) => isoDate(d))
-  const firstOfWeek = weekDayStrs[0]
-  const lastOfWeek  = weekDayStrs[weekDayStrs.length - 1]
-
-  // For weekly chart, filter txRange if range <= 7 days, otherwise use txMonth filtered to week
-  const txWeekSource = showWeekChart ? txRange : txMonth
-  const txWeek = txWeekSource.filter((t) => t.date >= firstOfWeek && t.date <= lastOfWeek)
-
-  const carsThisWeek    = txWeek.length
-  const revenueThisWeek = txWeek.reduce((s, t) => s + t.price, 0)
-
-  const weekRevenue: number[] = Array(weekDays.length).fill(0)
-  const weekCars:    number[] = Array(weekDays.length).fill(0)
-  txWeek.forEach((t) => {
-    const idx = weekDayStrs.indexOf(t.date)
-    if (idx >= 0) { weekRevenue[idx] += t.price; weekCars[idx]++ }
+  // ── Revenue by day chart — always follows global range ────────────────────
+  const rangeDates    = range.from && range.to ? datesBetween(range.from, range.to) : [todayStr]
+  const revenueByDate: Record<string, number> = {}
+  const carsByDate:    Record<string, number> = {}
+  txRange.forEach((t) => {
+    revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price
+    carsByDate[t.date]    = (carsByDate[t.date] ?? 0) + 1
   })
-  const maxWeekRevenue  = Math.max(...weekRevenue, 1)
-  const busiestIdx      = weekCars.indexOf(Math.max(...weekCars))
-  const busiestDay      = weekCars[busiestIdx] > 0
-    ? (showWeekChart
-        ? new Date(weekDayStrs[busiestIdx] + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
-        : DAY_NAMES[busiestIdx])
+
+  const chartRevenue = rangeDates.map((d) => revenueByDate[d] ?? 0)
+  const chartCars    = rangeDates.map((d) => carsByDate[d] ?? 0)
+  const maxRevenue   = Math.max(...chartRevenue, 1)
+
+  const totalChartCars    = chartCars.reduce((s, v) => s + v, 0)
+  const totalChartRevenue = chartRevenue.reduce((s, v) => s + v, 0)
+  const busiestIdx        = chartCars.indexOf(Math.max(...chartCars))
+  const busiestDay        = chartCars[busiestIdx] > 0
+    ? new Date(rangeDates[busiestIdx] + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
     : '—'
 
-  // Breakeven — always calendar month
-  const fixedCosts       = payables.reduce((s, p) => s + p.amount, 0)
-  const revenueMonth     = txMonth.reduce((s, t) => s + t.price, 0)
-  const remaining        = Math.max(fixedCosts - revenueMonth, 0)
-  const progressPct      = Math.min((revenueMonth / (fixedCosts || 1)) * 100, 100)
-  const aboveBreakeven   = revenueMonth >= fixedCosts
-  const totalDays        = daysInMonth(year, month)
-  const dayOfMonth       = now.getFullYear() === year && now.getMonth() + 1 === month ? now.getDate() : totalDays
-  const daysLeft         = Math.max(totalDays - dayOfMonth + 1, 0)
-  const carsMonth        = txMonth.length
-  const totalQuota       = Math.ceil(DAILY_QUOTA * totalDays)
-  const carsStillNeeded  = Math.max(totalQuota - carsMonth, 0)
-  const carsPerDayNeeded = daysLeft > 0 ? (carsStillNeeded / daysLeft).toFixed(1) : '0'
-  const beMonthLabel     = new Date(year, month - 1, 1).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
+  // Smart label step so x-axis doesn't crowd
+  const labelStep = rangeDates.length <= 7 ? 1
+    : rangeDates.length <= 14 ? 2
+    : rangeDates.length <= 31 ? 4 : 7
 
-  // ── Top services — follows global range, splits comma-separated services ──
+  // Top services — selected range, split comma-separated
   const serviceMap: Record<string, { count: number; revenue: number }> = {}
   txRange.forEach((t) => {
     const services = t.service_name.split(',').map((s) => s.trim()).filter(Boolean)
     services.forEach((svc) => {
       if (!serviceMap[svc]) serviceMap[svc] = { count: 0, revenue: 0 }
       serviceMap[svc].count++
-      // Distribute revenue equally among services in a stacked transaction
       serviceMap[svc].revenue += t.price / services.length
     })
   })
   const topServices     = Object.entries(serviceMap).sort((a, b) => b[1].count - a[1].count).slice(0, 5)
   const maxServiceCount = Math.max(...topServices.map((s) => s[1].count), 1)
 
-  // ── Payment breakdown — follows global range ──────────────────────────────
+  // Payment breakdown — selected range
   const paymentMap: Record<string, number> = {}
   txRange.forEach((t) => { paymentMap[t.payment_method] = (paymentMap[t.payment_method] ?? 0) + t.price })
   const paymentTotal   = Object.values(paymentMap).reduce((s, v) => s + v, 0)
@@ -239,8 +168,8 @@ export default function DashboardPage() {
   async function handleExport(fmt: ExportFormat) {
     setExporting(true)
     const rangeLabel = formatRangeLabel(range)
-    const slug       = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
-    const filename   = `primera-dashboard-${slug}`
+    const slug = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const filename = `primera-dashboard-${slug}`
     const summaryRows: unknown[][] = [
       ['Metric', 'Value'],
       ['Period', rangeLabel],
@@ -248,15 +177,9 @@ export default function DashboardPage() {
       ['Total Revenue', formatPHP(totalRevenue)],
       ['On Hand', formatPHP(onHandTotal)],
       ['Deposited', formatPHP(depositedTotal)],
-      [],
-      ['Breakeven — ' + beMonthLabel, ''],
-      ['Fixed Costs', formatPHP(fixedCosts)],
-      ['Month Revenue', formatPHP(revenueMonth)],
-      ['Progress', `${progressPct.toFixed(1)}%`],
-      ['Status', aboveBreakeven ? 'Above Breakeven' : 'Below Breakeven'],
     ]
-    const serviceRows = topServices.map(([name, { count, revenue }], i) => [i + 1, name, count, formatPHP(revenue)])
-    const paymentRows = paymentEntries.map(([method, amount]) => [method, formatPHP(amount), `${((amount / (paymentTotal || 1)) * 100).toFixed(1)}%`])
+    const serviceRows  = topServices.map(([name, { count, revenue }], i) => [i + 1, name, count, formatPHP(revenue)])
+    const paymentRows  = paymentEntries.map(([method, amount]) => [method, formatPHP(amount), `${((amount / (paymentTotal || 1)) * 100).toFixed(1)}%`])
     if (fmt === 'csv') {
       downloadCsv([['=== SUMMARY ==='], ...summaryRows, [], ['=== TOP SERVICES ==='], ['#', 'Service', 'Cars', 'Revenue'], ...serviceRows, [], ['=== PAYMENT BREAKDOWN ==='], ['Method', 'Amount', '%'], ...paymentRows], `${filename}.csv`)
     } else if (fmt === 'xlsx') {
@@ -267,9 +190,7 @@ export default function DashboardPage() {
     setExporting(false)
   }
 
-  if (loading) {
-    return <div className="flex min-h-[60vh] items-center justify-center"><p className="text-gray-400">Loading dashboard…</p></div>
-  }
+  if (loading) return <div className="flex min-h-[60vh] items-center justify-center"><p className="text-gray-400">Loading dashboard…</p></div>
 
   return (
     <div className="px-6 py-6">
@@ -289,7 +210,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Live Stats — always today */}
+        {/* Live Stats */}
         <section>
           <div className="mb-3 flex items-center justify-between">
             <SectionTitle>Live — Today</SectionTitle>
@@ -315,7 +236,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Snapshot / Period Summary */}
+        {/* Period Summary */}
         <section>
           <SectionTitle>{snapshotLabel}</SectionTitle>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -326,111 +247,49 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Weekly / Range Chart */}
+        {/* Revenue by Day — follows global range */}
         <section>
-          <SectionTitle>
-            {showWeekChart
-              ? `${formatRangeLabel(range)} — Revenue by Day`
-              : `Week of ${firstOfWeek} – ${lastOfWeek}`}
-          </SectionTitle>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard label="Cars" value={String(carsThisWeek)} />
-            <StatCard label="Revenue" value={formatPHP(revenueThisWeek)} accent />
-            <StatCard label="Busiest Day" value={busiestDay}
-              sub={busiestDay !== '—' ? `${weekCars[busiestIdx]} cars` : undefined} />
+          <SectionTitle>Revenue by Day — {formatRangeLabel(range)}</SectionTitle>
+          <div className="grid gap-4 sm:grid-cols-3 mb-4">
+            <StatCard label="Total Cars"    value={String(totalChartCars)} />
+            <StatCard label="Total Revenue" value={formatPHP(totalChartRevenue)} accent />
+            <StatCard label="Busiest Day"   value={busiestDay}
+              sub={busiestDay !== '—' ? `${chartCars[busiestIdx]} cars` : undefined} />
           </div>
-          <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue by Day</p>
-            <div className="flex items-end gap-2" style={{ height: '120px' }}>
-              {weekDays.map((d, i) => {
-                const ds       = isoDate(d)
-                const isToday  = ds === todayStr
-                const isFuture = d > now
-                const inRange  = ds >= (range.from || '') && ds <= (range.to || '')
-                const heightPct = weekRevenue[i] > 0 ? Math.max((weekRevenue[i] / maxWeekRevenue) * 100, 5) : 0
-                const dayLabel  = showWeekChart
-                  ? new Date(ds + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
-                  : DAY_NAMES[i]
-                return (
-                  <div key={i} className="group relative flex flex-1 flex-col items-center gap-1">
-                    {weekRevenue[i] > 0 && (
-                      <div className="pointer-events-none absolute bottom-full mb-1 hidden whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white group-hover:block">
-                        {formatPHP(weekRevenue[i])}
-                      </div>
-                    )}
-                    <div className="flex w-full flex-col justify-end" style={{ height: '96px' }}>
-                      <div className="w-full rounded-t transition-all" style={{
-                        height: weekRevenue[i] === 0 ? '2px' : `${heightPct}%`,
-                        backgroundColor: isFuture ? '#e5e7eb' : isToday ? '#B8922A' : inRange && weekRevenue[i] > 0 ? '#EDD98A' : '#f3f4f6',
-                      }} />
-                    </div>
-                    <span className={`text-xs font-medium ${isToday ? 'text-[#B8922A]' : inRange ? 'text-gray-600' : 'text-gray-300'}`}>
-                      {dayLabel}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* Breakeven Tracker — always calendar month */}
-        <section>
-          <SectionTitle>Breakeven Tracker — {beMonthLabel}</SectionTitle>
           <div className="rounded-2xl bg-white p-5 shadow-sm">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Monthly Fixed Costs</p>
-                <p className="text-xl font-bold text-gray-900">{formatPHP(fixedCosts)}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue This Month</p>
-                <p className={`text-xl font-bold ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>{formatPHP(revenueMonth)}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  {aboveBreakeven ? 'Above Breakeven By' : 'Still Needed'}
-                </p>
-                <p className={`text-xl font-bold ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>
-                  {formatPHP(aboveBreakeven ? revenueMonth - fixedCosts : remaining)}
-                </p>
-              </div>
-            </div>
-            <div className="mb-1 h-3 w-full overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%`, backgroundColor: aboveBreakeven ? '#22c55e' : '#ef4444' }} />
-            </div>
-            <div className="mb-5 flex justify-between text-xs text-gray-400">
-              <span>₱0</span>
-              <span>{progressPct.toFixed(1)}% of target</span>
-              <span>{formatPHP(fixedCosts)}</span>
-            </div>
-            <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                <div>
-                  <span className="font-semibold text-gray-700">Daily quota: </span>
-                  <span className="font-bold text-[#B8922A]">{DAILY_QUOTA} cars/day</span>
-                </div>
-                <div className="hidden h-4 w-px bg-gray-200 sm:block" />
-                <div>
-                  <span className="font-semibold text-gray-700">Cars still needed: </span>
-                  <span className={`font-bold ${carsStillNeeded === 0 ? 'text-green-600' : 'text-red-500'}`}>
-                    {carsStillNeeded === 0 ? 'On track ✓' : `${carsStillNeeded} cars`}
-                  </span>
-                </div>
-                <div className="hidden h-4 w-px bg-gray-200 sm:block" />
-                <div>
-                  <span className="font-semibold text-gray-700">Per day ({daysLeft}d left): </span>
-                  <span className={`font-bold ${parseFloat(carsPerDayNeeded) <= DAILY_QUOTA ? 'text-green-600' : 'text-red-500'}`}>
-                    {carsStillNeeded === 0 ? '—' : `${carsPerDayNeeded}/day`}
-                  </span>
-                </div>
+            <div className="overflow-x-auto">
+              <div className="flex items-end gap-[3px]" style={{ height: '140px', paddingTop: '32px', minWidth: rangeDates.length > 14 ? `${rangeDates.length * 20}px` : 'auto' }}>
+                {rangeDates.map((dateStr, i) => {
+                  const rev      = chartRevenue[i]
+                  const isToday  = dateStr === todayStr
+                  const heightPct = rev > 0 ? Math.max((rev / maxRevenue) * 100, 5) : 0
+                  const dayNum   = parseInt(dateStr.split('-')[2], 10)
+                  const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
+                  return (
+                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center" style={{ minWidth: '16px' }}>
+                      {rev > 0 && (
+                        <div className="pointer-events-none absolute bottom-full mb-1 hidden whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white group-hover:block z-10">
+                          {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {formatPHP(rev)}
+                        </div>
+                      )}
+                      <span className="absolute text-[8px] font-semibold whitespace-nowrap"
+                        style={{ bottom: '20px', color: '#0a0a0a', transform: 'translateX(-50%)', left: '50%' }}>
+                        {rev > 0 ? '₱' + Math.round(rev / 1000).toLocaleString() + 'k' : ''}
+                      </span>
+                      <div className="w-full rounded-t"
+                        style={{ height: rev === 0 ? '2px' : `${heightPct}%`, backgroundColor: isToday ? '#B8922A' : rev > 0 ? '#EDD98A' : '#f3f4f6' }} />
+                      <span className="mt-1 text-[9px]" style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
+                        {showLabel ? dayNum : ''}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
         </section>
 
-        {/* Top Services + Payment Breakdown — both follow global range */}
+        {/* Top Services + Payment — both follow global range */}
         <section className="grid gap-6 lg:grid-cols-2">
           <div>
             <SectionTitle>Top Services</SectionTitle>
@@ -452,8 +311,7 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div className="h-full rounded-full"
-                          style={{ width: `${(count / maxServiceCount) * 100}%`, backgroundColor: '#EDD98A' }} />
+                        <div className="h-full rounded-full" style={{ width: `${(count / maxServiceCount) * 100}%`, backgroundColor: '#EDD98A' }} />
                       </div>
                     </div>
                   ))}
