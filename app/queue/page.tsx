@@ -58,12 +58,15 @@ const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 function mapServiceName(raw: string): string[] {
   const map: Record<string, string[]> = {
     'Basic':                      ['Basic Wash'],
-    'Basic + Wax':                ['Basic Wash', 'Wax Only'],
-    'Body Wash + Wax':            ['Body Wash', 'Wax Only'],
+    'Basic + Wax':                ['Basic Wash', 'Wax'],
+    'Body Wash + Wax':            ['Body Wash', 'Wax'],
     'Basic + Bac to Zero':        ['Basic Wash', 'Bac-2-Zero'],
-    'Basic + Bac to Zero + Wax':  ['Basic Wash', 'Bac-2-Zero', 'Wax Only'],
+    'Basic + Bac to Zero + Wax':  ['Basic Wash', 'Bac-2-Zero', 'Wax'],
     'Body Wash':                  ['Body Wash'],
     'Others':                     ['Others'],
+    'Wax Only':                   ['Wax'],
+    'Basic Wash, Wax Only':       ['Basic Wash', 'Wax'],
+    'Body Wash, Wax Only':        ['Body Wash', 'Wax'],
   }
   const trimmed = raw.trim()
   if (map[trimmed]) return map[trimmed]
@@ -337,10 +340,16 @@ export default function QueuePage() {
                           {isOthers(svc.name) && (
                             <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
                           )}
+                          {!isOthers(svc.name) && unitPrice === 0 && sizeForEdit && (
+                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>no price set</span>
+                          )}
                         </button>
                       )
                     })}
                   </div>
+                  {!sizeForEdit && (
+                    <p className="mt-2 text-xs text-amber-600">⚠ No size category set — prices cannot be calculated</p>
+                  )}
                 </div>
 
                 {editState.selectedServices.length > 0 && (
