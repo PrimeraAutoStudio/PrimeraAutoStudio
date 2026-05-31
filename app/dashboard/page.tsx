@@ -36,7 +36,10 @@ function formatPHP(n: number) {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2 })
 }
 
-function isoDate(d: Date) { return d.toISOString().split('T')[0] }
+function isoDate(d: Date) {
+  // Use local date parts to avoid UTC offset shifting the date (e.g. UTC+8)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 function weekDaysFromRange(from: string, to: string): Date[] {
   // Return Mon-Sun of the week that contains `from`

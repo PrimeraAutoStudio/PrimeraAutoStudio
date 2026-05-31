@@ -555,7 +555,8 @@ export default function PnLPage() {
   chartTransactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
   const chartValues   = chartDates.map((d) => revenueByDate[d] ?? 0)
   const maxDayRevenue = Math.max(...chartValues, 1)
-  const todayStr      = new Date().toISOString().split('T')[0]
+  const _td = new Date()
+  const todayStr = `${_td.getFullYear()}-${String(_td.getMonth() + 1).padStart(2, '0')}-${String(_td.getDate()).padStart(2, '0')}`
   const rangeLen      = chartDates.length
 
   const labelStep = rangeLen <= 7 ? 1

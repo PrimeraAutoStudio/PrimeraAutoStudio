@@ -22,7 +22,8 @@ export interface DateRange {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function iso(d: Date) {
-  return d.toISOString().split('T')[0]
+  // Use local date parts to avoid UTC offset shifting the date (e.g. UTC+8)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function addDays(base: Date, n: number) {
