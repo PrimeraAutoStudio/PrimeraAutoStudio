@@ -9,6 +9,8 @@ import DateRangeSelector, {
   formatRangeLabel,
   rangeForPreset,
 } from '@/app/components/DateRangeSelector'
+import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
+import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,10 +88,11 @@ export default function DashboardPage() {
   const todayStr = isoDate(now)
 
   const [range, setRange]       = useState<DateRange>(rangeForPreset('today'))
-  const [txRange, setTxRange]   = useState<Transaction[]>([])
-  const [txMonth, setTxMonth]   = useState<Transaction[]>([])
-  const [payables, setPayables] = useState<Payable[]>([])
-  const [loading, setLoading]   = useState(true)
+  const [txRange, setTxRange]     = useState<Transaction[]>([])
+  const [txMonth, setTxMonth]     = useState<Transaction[]>([])
+  const [payables, setPayables]   = useState<Payable[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [exporting, setExporting] = useState(false)
 
   // ── Derived month bounds from the range's `from` date ─────────────────────
   const { firstOfMonth, lastOfMonth, year, month } =
@@ -189,6 +192,78 @@ export default function DashboardPage() {
   const paymentTotal   = Object.values(paymentMap).reduce((s, v) => s + v, 0)
   const paymentEntries = Object.entries(paymentMap).sort((a, b) => b[1] - a[1])
 
+  // ── Export ────────────────────────────────────────────────────────────────
+
+  async function handleExport(fmt: ExportFormat) {
+    setExporting(true)
+    const rangeLabel = formatRangeLabel(range)
+    const slug       = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const filename   = `primera-dashboard-${slug}`
+
+    const summaryRows: unknown[][] = [
+      ['Metric', 'Value'],
+      ['Period',          rangeLabel],
+      ['Total Cars',       String(totalCars)],
+      ['Total Revenue',    formatPHP(totalRevenue)],
+      ['On Hand',          formatPHP(onHandTotal)],
+      ['Deposited',        formatPHP(depositedTotal)],
+      [],
+      ['Breakeven — ' + beMonthLabel, ''],
+      ['Fixed Costs',     formatPHP(fixedCosts)],
+      ['Month Revenue',   formatPHP(revenueMonth)],
+      ['Progress',        `${progressPct.toFixed(1)}%`],
+      ['Status',          aboveBreakeven ? 'Above Breakeven' : 'Below Breakeven'],
+    ]
+
+    const serviceRows  = topServices.map(([name, { count, revenue }], i) =>
+      [i + 1, name, count, formatPHP(revenue)]
+    )
+    const paymentRows  = paymentEntries.map(([method, amount]) =>
+      [method, formatPHP(amount), `${((amount / (paymentTotal || 1)) * 100).toFixed(1)}%`]
+    )
+
+    if (fmt === 'csv') {
+      const all: unknown[][] = [
+        ['=== SUMMARY ==='], ...summaryRows, [],
+        ['=== TOP SERVICES ==='],
+        ['#', 'Service', 'Cars', 'Revenue'], ...serviceRows, [],
+        ['=== PAYMENT BREAKDOWN ==='],
+        ['Method', 'Amount', '%'], ...paymentRows,
+      ]
+      downloadCsv(all, `${filename}.csv`)
+    } else if (fmt === 'xlsx') {
+      await downloadXlsx([
+        { name: 'Summary',  rows: summaryRows },
+        { name: 'Services', rows: [['#', 'Service', 'Cars', 'Revenue'], ...serviceRows] },
+        { name: 'Payments', rows: [['Method', 'Amount', '%'], ...paymentRows] },
+      ], `${filename}.xlsx`)
+    } else {
+      await downloadPdf(
+        'Dashboard Report',
+        rangeLabel,
+        [
+          {
+            title:   'Period Summary',
+            head:    ['Metric', 'Value'],
+            rows:    summaryRows.filter((r) => r.length === 2 && r[0] !== ''),
+          },
+          {
+            title:   'Top Services',
+            head:    ['#', 'Service', 'Cars', 'Revenue'],
+            rows:    serviceRows,
+          },
+          {
+            title:   'Payment Breakdown',
+            head:    ['Method', 'Amount', '%'],
+            rows:    paymentRows,
+          },
+        ],
+        `${filename}.pdf`
+      )
+    }
+    setExporting(false)
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -205,7 +280,10 @@ export default function DashboardPage() {
 
         {/* Header + date range selector */}
         <div>
-          <h1 className="mb-1 text-2xl font-bold text-gray-900">Dashboard</h1>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+            <ExportMenu onExport={handleExport} loading={exporting} />
+          </div>
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <DateRangeSelector value={range} onChange={setRange} />
             <p className="mt-2 text-xs text-gray-400">
@@ -213,6 +291,7 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
+
 
         {/* ── Snapshot / Period Summary ── */}
         <section>

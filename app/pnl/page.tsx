@@ -2,13 +2,15 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import DateRangeSelector, {
   DateRange,
   formatRangeLabel,
   rangeForPreset,
 } from '@/app/components/DateRangeSelector'
+import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
+import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,8 +26,31 @@ interface ExpenseForm {
   amount: string; payment_type: string; notes: string
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const CATEGORIES    = ['Food', 'Salary', 'Supplies', 'Gas', 'Equipment', 'Misc']
 const PAYMENT_TYPES = ['Cash', 'Online']
+
+// Warm, brand-adjacent palette — no rainbow colours
+const CAT_COLORS: Record<string, string> = {
+  Food:      '#B8922A',   // burnished gold
+  Salary:    '#7C5C1E',   // dark gold/brown
+  Supplies:  '#D4AB4E',   // gold light
+  Gas:       '#A0845C',   // warm tan
+  Equipment: '#6B4F2A',   // walnut
+  Misc:      '#C4A882',   // champagne muted
+  Utilities: '#E8D5A3',   // pale straw
+}
+
+const CAT_BADGE: Record<string, string> = {
+  Food:      'bg-orange-100 text-orange-700',
+  Salary:    'bg-purple-100 text-purple-700',
+  Supplies:  'bg-cyan-100 text-cyan-700',
+  Gas:       'bg-yellow-100 text-yellow-700',
+  Equipment: 'bg-amber-100 text-amber-700',
+  Misc:      'bg-gray-100 text-gray-600',
+  Utilities: 'bg-lime-100 text-lime-700',
+}
 
 const EMPTY_EXPENSE_FORM: ExpenseForm = {
   date: new Date().toISOString().split('T')[0],
@@ -38,11 +63,10 @@ function formatPHP(n: number) {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2 })
 }
 
-// Build an ordered array of every date string in [from, to]
 function datesBetween(from: string, to: string): string[] {
   const dates: string[] = []
   const cur = new Date(from + 'T00:00:00')
-  const end = new Date(to   + 'T00:00:00')
+  const end = new Date(to + 'T00:00:00')
   while (cur <= end) {
     dates.push(cur.toISOString().split('T')[0])
     cur.setDate(cur.getDate() + 1)
@@ -51,9 +75,377 @@ function datesBetween(from: string, to: string): string[] {
 }
 
 function shortDate(iso: string) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', {
-    month: 'short', day: 'numeric',
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
+}
+
+// Group dates into weeks; return array of { label, dates[] }
+function groupByWeek(dates: string[]): { label: string; dates: string[] }[] {
+  if (!dates.length) return []
+  const weeks: { label: string; dates: string[] }[] = []
+  let cur: string[] = []
+  dates.forEach((d, i) => {
+    cur.push(d)
+    const dow = new Date(d + 'T00:00:00').getDay() // 0=Sun
+    const isWeekEnd = dow === 0 || i === dates.length - 1
+    if (isWeekEnd && cur.length) {
+      weeks.push({ label: shortDate(cur[0]), dates: cur })
+      cur = []
+    }
   })
+  if (cur.length) weeks.push({ label: shortDate(cur[0]), dates: cur })
+  return weeks
+}
+
+// ─── Chart Components ─────────────────────────────────────────────────────────
+
+// 1 ── Revenue Bar Chart ───────────────────────────────────────────────────────
+
+interface RevBarChartProps {
+  chartDates:    string[]
+  chartValues:   number[]
+  maxDayRevenue: number
+  todayStr:      string
+  labelStep:     number
+}
+
+function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: RevBarChartProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  if (chartDates.length === 0) return null
+
+  const BAR_H   = 160  // px — bar drawing area
+  const LABEL_H = 24   // px — day-number label row below bars
+  const TOP_PAD = 40   // px — guaranteed clearance above tallest bar for amount labels
+
+  // Short peso format: ₱4,250 (no decimals)
+  function fmtAmt(n: number) {
+    return '₱' + Math.round(n).toLocaleString('en-PH')
+  }
+
+  // Full date label for tooltip e.g. "May 15, 2026"
+  function fullDate(iso: string) {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', {
+      month: 'long', day: 'numeric', year: 'numeric',
+    })
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <div
+        className="flex items-end gap-[2px]"
+        style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD }}
+      >
+        {chartDates.map((dateStr, i) => {
+          const rev       = chartValues[i]
+          const isToday   = dateStr === todayStr
+          const barHeight = rev > 0 ? Math.max((rev / maxDayRevenue) * BAR_H, 6) : 2
+          const dayNum    = parseInt(dateStr.split('-')[2], 10)
+          const showDay   = i === 0 || i === chartDates.length - 1 || i % labelStep === 0
+          const isHovered = hoveredIdx === i
+
+          return (
+            <div
+              key={dateStr}
+              className="relative flex flex-1 flex-col items-center"
+              style={{ height: BAR_H + LABEL_H }}
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            >
+              {/* Hover tooltip — date label */}
+              {isHovered && (
+                <div
+                  className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] font-medium text-white shadow-lg"
+                  style={{
+                    bottom: LABEL_H + barHeight + 22,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                  }}
+                >
+                  {fullDate(dateStr)}
+                </div>
+              )}
+
+              {/* Static amount label — always visible, obsidian black */}
+              {rev > 0 && (
+                <span
+                  className="absolute text-[9px] font-semibold text-center leading-none whitespace-nowrap"
+                  style={{
+                    bottom: LABEL_H + barHeight + 3,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    color: '#0a0a0a',
+                  }}
+                >
+                  {fmtAmt(rev)}
+                </span>
+              )}
+
+              {/* Bar */}
+              <div
+                className="absolute w-full rounded-t transition-opacity duration-100"
+                style={{
+                  bottom: LABEL_H,
+                  height: barHeight,
+                  backgroundColor: rev === 0 ? '#f3f4f6' : isToday ? '#B8922A' : '#EDD98A',
+                  opacity: isHovered ? 0.8 : 1,
+                }}
+              />
+
+              {/* Day number */}
+              <span
+                className="absolute bottom-0 text-[10px]"
+                style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}
+              >
+                {showDay ? dayNum : ''}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// 2 ── Expense Donut Chart ─────────────────────────────────────────────────────
+
+interface DonutChartProps { expenses: Expense[] }
+
+function DonutChart({ expenses }: DonutChartProps) {
+  const [hovered, setHovered] = useState<string | null>(null)
+
+  if (expenses.length === 0) {
+    return <p className="py-8 text-center text-sm text-gray-400">No expenses for this period.</p>
+  }
+
+  // Aggregate by category
+  const totals: Record<string, number> = {}
+  expenses.forEach((e) => {
+    totals[e.category] = (totals[e.category] ?? 0) + e.amount
+  })
+  const total   = Object.values(totals).reduce((s, v) => s + v, 0)
+  const slices  = Object.entries(totals).sort((a, b) => b[1] - a[1])
+
+  // Build SVG arc paths
+  const CX = 80, CY = 80, R = 64, INNER = 38
+  let cumAngle = -Math.PI / 2  // start at top
+
+  function polar(cx: number, cy: number, r: number, angle: number) {
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) }
+  }
+
+  const paths = slices.map(([cat, amt]) => {
+    const angle = (amt / total) * 2 * Math.PI
+    const startAngle = cumAngle
+    cumAngle += angle
+    const endAngle = cumAngle
+
+    const large = angle > Math.PI ? 1 : 0
+    const os = polar(CX, CY, R, startAngle)
+    const oe = polar(CX, CY, R, endAngle)
+    const is = polar(CX, CY, INNER, endAngle)
+    const ie = polar(CX, CY, INNER, startAngle)
+
+    const d = [
+      `M ${os.x} ${os.y}`,
+      `A ${R} ${R} 0 ${large} 1 ${oe.x} ${oe.y}`,
+      `L ${is.x} ${is.y}`,
+      `A ${INNER} ${INNER} 0 ${large} 0 ${ie.x} ${ie.y}`,
+      'Z',
+    ].join(' ')
+
+    return { cat, amt, d, color: CAT_COLORS[cat] ?? '#9ca3af' }
+  })
+
+  const hoveredAmt = hovered ? (totals[hovered] ?? 0) : total
+  const hoveredLabel = hovered ?? 'Total'
+
+  return (
+    <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+      {/* Donut SVG */}
+      <div className="relative shrink-0">
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          {paths.map(({ cat, d, color }) => (
+            <path
+              key={cat}
+              d={d}
+              fill={color}
+              opacity={hovered && hovered !== cat ? 0.35 : 1}
+              className="cursor-pointer transition-opacity duration-150"
+              onMouseEnter={() => setHovered(cat)}
+              onMouseLeave={() => setHovered(null)}
+            />
+          ))}
+          {/* Centre label */}
+          <text x={CX} y={CY - 6} textAnchor="middle" fontSize="9" fill="#6b7280" fontWeight="600">
+            {hoveredLabel}
+          </text>
+          <text x={CX} y={CY + 8} textAnchor="middle" fontSize="10" fill="#111827" fontWeight="700">
+            {formatPHP(hoveredAmt)}
+          </text>
+          {hovered && (
+            <text x={CX} y={CY + 20} textAnchor="middle" fontSize="8" fill="#B8922A">
+              {((hoveredAmt / total) * 100).toFixed(1)}%
+            </text>
+          )}
+        </svg>
+      </div>
+
+      {/* Legend */}
+      <div className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
+        {slices.map(([cat, amt]) => (
+          <div
+            key={cat}
+            className="flex cursor-pointer items-center gap-2 text-sm"
+            onMouseEnter={() => setHovered(cat)}
+            onMouseLeave={() => setHovered(null)}
+            style={{ opacity: hovered && hovered !== cat ? 0.4 : 1 }}
+          >
+            <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: CAT_COLORS[cat] ?? '#9ca3af' }} />
+            <span className="font-medium text-gray-700">{cat}</span>
+            <span className="text-gray-400">{formatPHP(amt)}</span>
+            <span className="text-xs text-gray-400">({((amt / total) * 100).toFixed(1)}%)</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// 3 ── Category Tracker ────────────────────────────────────────────────────────
+
+interface CategoryTrackerProps {
+  expenses:   Expense[]
+  chartDates: string[]
+  rangeLen:   number
+}
+
+function CategoryTracker({ expenses, chartDates, rangeLen }: CategoryTrackerProps) {
+  const [selected, setSelected] = useState('All')
+  const allCats = ['All', ...CATEGORIES.filter((c) => expenses.some((e) => e.category === c))]
+
+  // Decide bucketing: day (≤31 days) or week (>31 days)
+  const byWeek = rangeLen > 31
+  const buckets = byWeek ? groupByWeek(chartDates) : chartDates.map((d) => ({ label: shortDate(d), dates: [d] }))
+
+  // Aggregate
+  function sumFor(cat: string, dates: string[]): number {
+    return expenses
+      .filter((e) => dates.includes(e.date) && (cat === 'All' || e.category === cat))
+      .reduce((s, e) => s + e.amount, 0)
+  }
+
+  const cats     = selected === 'All' ? CATEGORIES.filter((c) => expenses.some((e) => e.category === c)) : [selected]
+  const bucketData = buckets.map((b) => ({
+    label:  b.label,
+    values: cats.map((c) => sumFor(c, b.dates)),
+  }))
+
+  const maxVal = Math.max(...bucketData.flatMap((b) => b.values), 1)
+  const BAR_H  = 120
+
+  const [tooltip, setTooltip] = useState<{ label: string; lines: string[] } | null>(null)
+  const [tooltipX, setTooltipX] = useState(0)
+  const trackerRef = useRef<HTMLDivElement>(null)
+
+  if (buckets.length === 0) {
+    return <p className="py-8 text-center text-sm text-gray-400">No expense data for this period.</p>
+  }
+
+  return (
+    <div>
+      {/* Category selector chips */}
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {allCats.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setSelected(c)}
+            className="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+            style={{
+              backgroundColor: selected === c ? (CAT_COLORS[c] ?? '#B8922A') : '#f3f4f6',
+              color:           selected === c ? '#fff' : '#6b7280',
+            }}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <div ref={trackerRef} className="relative overflow-x-auto">
+        {/* Tooltip */}
+        {tooltip && (
+          <div
+            className="pointer-events-none absolute z-10 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white shadow-lg"
+            style={{ left: tooltipX, top: 0, transform: 'translateX(-50%)' }}
+          >
+            <div className="mb-1 font-semibold text-gray-300">{tooltip.label}</div>
+            {tooltip.lines.map((l, i) => <div key={i}>{l}</div>)}
+          </div>
+        )}
+
+        <div className="flex items-end gap-1" style={{ height: BAR_H + 28, paddingTop: 8 }}>
+          {bucketData.map((b, bi) => (
+            <div
+              key={bi}
+              className="group flex flex-1 flex-col items-center"
+              style={{ height: BAR_H + 28 }}
+              onMouseEnter={(e) => {
+                const rect = trackerRef.current?.getBoundingClientRect()
+                const bRect = e.currentTarget.getBoundingClientRect()
+                if (rect) setTooltipX(bRect.left - rect.left + bRect.width / 2)
+                setTooltip({
+                  label: b.label,
+                  lines: cats.map((c, ci) => `${c}: ${formatPHP(b.values[ci])}`),
+                })
+              }}
+              onMouseLeave={() => setTooltip(null)}
+            >
+              {/* Stacked / grouped bars */}
+              <div className="relative bottom-0 flex w-full items-end justify-center gap-[1px]" style={{ height: BAR_H }}>
+                {selected === 'All' ? (
+                  // Stacked
+                  <div className="relative flex w-3/4 flex-col-reverse overflow-hidden rounded-t">
+                    {cats.map((c, ci) => {
+                      const pct = b.values[ci] > 0 ? Math.max((b.values[ci] / maxVal) * BAR_H, 2) : 0
+                      return (
+                        <div key={c} style={{ height: pct, backgroundColor: CAT_COLORS[c] ?? '#9ca3af' }} />
+                      )
+                    })}
+                  </div>
+                ) : (
+                  // Single bar
+                  <div
+                    className="w-3/4 rounded-t"
+                    style={{
+                      height: Math.max((b.values[0] / maxVal) * BAR_H, b.values[0] > 0 ? 3 : 0),
+                      backgroundColor: CAT_COLORS[selected] ?? '#B8922A',
+                    }}
+                  />
+                )}
+              </div>
+              {/* Bucket label */}
+              <span className="mt-1 text-[9px] text-gray-400 text-center leading-tight">
+                {b.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend for stacked */}
+      {selected === 'All' && (
+        <div className="mt-3 flex flex-wrap gap-3">
+          {cats.map((c) => (
+            <div key={c} className="flex items-center gap-1.5 text-xs text-gray-600">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: CAT_COLORS[c] ?? '#9ca3af' }} />
+              {c}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -61,16 +453,30 @@ function shortDate(iso: string) {
 export default function PnLPage() {
   const [range, setRange] = useState<DateRange>(rangeForPreset('this_month'))
 
+  // Each chart section has its own independent range + data
+  const [chartRange, setChartRange]               = useState<DateRange>(rangeForPreset('this_month'))
+  const [chartTransactions, setChartTransactions] = useState<Transaction[]>([])
+  const [chartLoading, setChartLoading]           = useState(true)
+
+  const [donutRange, setDonutRange]               = useState<DateRange>(rangeForPreset('this_month'))
+  const [donutExpenses, setDonutExpenses]         = useState<Expense[]>([])
+  const [donutLoading, setDonutLoading]           = useState(true)
+
+  const [trackerRange, setTrackerRange]           = useState<DateRange>(rangeForPreset('this_month'))
+  const [trackerExpenses, setTrackerExpenses]     = useState<Expense[]>([])
+  const [trackerLoading, setTrackerLoading]       = useState(true)
+
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [expenses, setExpenses]         = useState<Expense[]>([])
   const [dataLoading, setDataLoading]   = useState(true)
 
-  const [showForm, setShowForm]   = useState(false)
-  const [form, setForm]           = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
+  const [exporting, setExporting]   = useState(false)
+  const [showForm, setShowForm]     = useState(false)
+  const [form, setForm]             = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
   const [formSaving, setFormSaving] = useState(false)
   const [formError, setFormError]   = useState('')
 
-  // ── Fetch ──────────────────────────────────────────────────────────────────
+  // ── Fetch — main (expenses + transactions for summary/donut/tracker) ────────
 
   const fetchData = useCallback(async () => {
     if (!range.from || !range.to) return
@@ -92,29 +498,75 @@ export default function PnLPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
+  // ── Fetch — chart-specific transactions ────────────────────────────────────
+
+  const fetchChartData = useCallback(async () => {
+    if (!chartRange.from || !chartRange.to) return
+    setChartLoading(true)
+    const { data, error } = await supabase
+      .from('transactions').select('date, price')
+      .gte('date', chartRange.from).lte('date', chartRange.to)
+    if (error) console.error('chart transactions:', error.message)
+    setChartTransactions(data ?? [])
+    setChartLoading(false)
+  }, [chartRange])
+
+  useEffect(() => { fetchChartData() }, [fetchChartData])
+
+  const fetchDonutData = useCallback(async () => {
+    if (!donutRange.from || !donutRange.to) return
+    setDonutLoading(true)
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('id, date, description, category, amount, payment_type, notes')
+      .gte('date', donutRange.from).lte('date', donutRange.to)
+    if (error) console.error('donut expenses:', error.message)
+    setDonutExpenses(data ?? [])
+    setDonutLoading(false)
+  }, [donutRange])
+
+  useEffect(() => { fetchDonutData() }, [fetchDonutData])
+
+  const fetchTrackerData = useCallback(async () => {
+    if (!trackerRange.from || !trackerRange.to) return
+    setTrackerLoading(true)
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('id, date, description, category, amount, payment_type, notes')
+      .gte('date', trackerRange.from).lte('date', trackerRange.to)
+    if (error) console.error('tracker expenses:', error.message)
+    setTrackerExpenses(data ?? [])
+    setTrackerLoading(false)
+  }, [trackerRange])
+
+  useEffect(() => { fetchTrackerData() }, [fetchTrackerData])
+
+  // ── Summary stats (uses main range) ────────────────────────────────────────
 
   const totalRevenue  = transactions.reduce((s, t) => s + t.price, 0)
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
   const netProfit     = totalRevenue - totalExpenses
   const totalCars     = transactions.length
 
-  // ── Bar chart — one bar per day in range ───────────────────────────────────
+  // ── Bar chart data (uses chartRange / chartTransactions) ───────────────────
 
-  const chartDates = range.from && range.to ? datesBetween(range.from, range.to) : []
+  const chartDates    = chartRange.from && chartRange.to ? datesBetween(chartRange.from, chartRange.to) : []
   const revenueByDate: Record<string, number> = {}
-  transactions.forEach((t) => {
-    revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price
-  })
-  const chartValues  = chartDates.map((d) => revenueByDate[d] ?? 0)
+  chartTransactions.forEach((t) => { revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price })
+  const chartValues   = chartDates.map((d) => revenueByDate[d] ?? 0)
   const maxDayRevenue = Math.max(...chartValues, 1)
   const todayStr      = new Date().toISOString().split('T')[0]
+  const rangeLen      = chartDates.length
 
-  // Label density — show every Nth label so they don't overlap
-  const labelStep = chartDates.length <= 7 ? 1
-    : chartDates.length <= 14 ? 2
-    : chartDates.length <= 31 ? 5
+  const labelStep = rangeLen <= 7 ? 1
+    : rangeLen <= 14 ? 2
+    : rangeLen <= 31 ? 4
     : 7
+
+  // ── Tracker date array (uses trackerRange) ─────────────────────────────────
+
+  const trackerDates  = trackerRange.from && trackerRange.to ? datesBetween(trackerRange.from, trackerRange.to) : []
+  const trackerRangeLen = trackerDates.length
 
   // ── Expense form ───────────────────────────────────────────────────────────
 
@@ -144,6 +596,40 @@ export default function PnLPage() {
     fetchData()
   }
 
+  // ── Export ────────────────────────────────────────────────────────────────
+
+  async function handleExport(format: ExportFormat) {
+    setExporting(true)
+    const label    = formatRangeLabel(range).replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const filename = `primera-pnl-${label}`
+    const TX_HEAD  = ['Date', 'Price', 'Payment Method', 'Status']
+    const txRows   = transactions.map((t) => [t.date, t.price, '', ''])
+    const EX_HEAD  = ['Date', 'Description', 'Category', 'Amount', 'Payment Type', 'Notes']
+    const exRows   = expenses.map((e) => [e.date, e.description, e.category, e.amount, e.payment_type, e.notes ?? ''])
+    const summary  = [
+      { label: 'Total Revenue',  value: formatPHP(totalRevenue) },
+      { label: 'Total Expenses', value: formatPHP(totalExpenses) },
+      { label: 'Net Profit',     value: formatPHP(netProfit) },
+      { label: 'Cars',           value: String(totalCars) },
+    ]
+    if (format === 'csv') {
+      downloadCsv([['=== INCOME ==='], TX_HEAD, ...txRows, [], ['=== EXPENSES ==='], EX_HEAD, ...exRows, [],
+        ['=== SUMMARY ==='], ...summary.map((s) => [s.label, s.value])], `${filename}.csv`)
+    } else if (format === 'xlsx') {
+      await downloadXlsx([
+        { name: 'Income',   rows: [TX_HEAD, ...txRows] },
+        { name: 'Expenses', rows: [EX_HEAD, ...exRows] },
+        { name: 'Summary',  rows: [['Metric', 'Value'], ...summary.map((s) => [s.label, s.value])] },
+      ], `${filename}.xlsx`)
+    } else {
+      await downloadPdf('P&L Report', formatRangeLabel(range), [
+        { title: 'Income',   head: TX_HEAD, rows: txRows },
+        { title: 'Expenses', head: EX_HEAD, rows: exRows, summary },
+      ], `${filename}.pdf`)
+    }
+    setExporting(false)
+  }
+
   // ── Styles ─────────────────────────────────────────────────────────────────
 
   const inputCls =
@@ -158,9 +644,12 @@ export default function PnLPage() {
       <div className="mx-auto max-w-5xl">
 
         {/* Header */}
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">P&amp;L Tracker</h1>
-          <p className="text-sm text-gray-500">Profit &amp; loss overview</p>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">P&amp;L Tracker</h1>
+            <p className="text-sm text-gray-500">Profit &amp; loss overview</p>
+          </div>
+          <ExportMenu onExport={handleExport} loading={exporting} />
         </div>
 
         {/* Date range selector */}
@@ -182,52 +671,85 @@ export default function PnLPage() {
         {dataLoading ? (
           <p className="py-16 text-center text-gray-400">Loading…</p>
         ) : (
-          <>
-            {/* ── Bar Chart ── */}
-            <section className="mb-8 rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-4 text-base font-semibold text-gray-800">
-                Daily Revenue — <span style={{ color: '#B8922A' }}>{formatRangeLabel(range)}</span>
-              </h2>
+          <div className="space-y-8">
 
-              {totalRevenue === 0 ? (
+            {/* ── 1. Daily Revenue Bar Chart ── */}
+            <section className="rounded-2xl bg-white p-6 shadow-sm">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <h2 className="text-base font-semibold text-gray-800">
+                  Daily Revenue —{' '}
+                  <span style={{ color: '#B8922A' }}>{formatRangeLabel(chartRange)}</span>
+                </h2>
+              </div>
+
+              {/* Chart-specific date range selector */}
+              <div className="mb-5 rounded-xl bg-gray-50 px-4 py-3">
+                <DateRangeSelector value={chartRange} onChange={setChartRange} />
+              </div>
+
+              {chartLoading ? (
+                <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
+              ) : chartValues.every((v) => v === 0) ? (
                 <p className="py-8 text-center text-sm text-gray-400">No revenue recorded for this period.</p>
               ) : (
-                <div className="flex items-end gap-[2px] overflow-x-auto pb-2" style={{ minHeight: '120px' }}>
-                  {chartDates.map((dateStr, i) => {
-                    const rev      = chartValues[i]
-                    const isToday  = dateStr === todayStr
-                    const heightPct = rev > 0 ? Math.max((rev / maxDayRevenue) * 100, 4) : 0
-                    const dayNum   = parseInt(dateStr.split('-')[2], 10)
-                    const showLabel = i === 0 || i === chartDates.length - 1 || (i + 1) % labelStep === 0
-                    return (
-                      <div key={dateStr} className="group relative flex flex-1 flex-col items-center">
-                        {rev > 0 && (
-                          <div className="pointer-events-none absolute bottom-full mb-1 hidden whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white group-hover:block">
-                            {shortDate(dateStr)}: {formatPHP(rev)}
-                          </div>
-                        )}
-                        <div className="flex w-full flex-col justify-end" style={{ height: '100px' }}>
-                          <div
-                            className="w-full rounded-t transition-all"
-                            style={{
-                              backgroundColor: rev === 0 ? '#f3f4f6' : isToday ? '#B8922A' : '#EDD98A',
-                              height: rev === 0 ? '2px' : `${heightPct}%`,
-                            }}
-                          />
-                        </div>
-                        <span
-                          className={`mt-1 text-[10px] ${isToday ? 'font-bold' : 'text-gray-400'}`}
-                          style={isToday ? { color: '#B8922A' } : {}}>
-                          {showLabel ? dayNum : ''}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
+                <RevBarChart
+                  chartDates={chartDates}
+                  chartValues={chartValues}
+                  maxDayRevenue={maxDayRevenue}
+                  todayStr={todayStr}
+                  labelStep={labelStep}
+                />
               )}
             </section>
 
-            {/* ── Expense Log ── */}
+            {/* ── 2. Expense charts side-by-side ── */}
+            <div className="grid gap-8 lg:grid-cols-2">
+
+              {/* 2a. Expense Donut */}
+              <section className="rounded-2xl bg-white p-6 shadow-sm">
+                <h2 className="mb-3 text-base font-semibold text-gray-800">
+                  Expenses by Category —{' '}
+                  <span className="text-sm font-normal" style={{ color: '#B8922A' }}>
+                    {formatRangeLabel(donutRange)}
+                  </span>
+                </h2>
+                <div className="mb-4 rounded-xl bg-gray-50 px-4 py-3">
+                  <DateRangeSelector value={donutRange} onChange={setDonutRange} />
+                </div>
+                {donutLoading ? (
+                  <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
+                ) : (
+                  <DonutChart expenses={donutExpenses} />
+                )}
+              </section>
+
+              {/* 2b. Category Tracker */}
+              <section className="rounded-2xl bg-white p-6 shadow-sm">
+                <h2 className="mb-3 text-base font-semibold text-gray-800">
+                  Category Tracker —{' '}
+                  <span className="text-sm font-normal" style={{ color: '#B8922A' }}>
+                    {formatRangeLabel(trackerRange)}
+                  </span>
+                </h2>
+                <div className="mb-3 rounded-xl bg-gray-50 px-4 py-3">
+                  <DateRangeSelector value={trackerRange} onChange={setTrackerRange} />
+                </div>
+                <p className="mb-4 text-xs text-gray-400">
+                  {trackerRangeLen > 31 ? 'Grouped by week' : 'Day-by-day spending per category'}
+                </p>
+                {trackerLoading ? (
+                  <p className="py-8 text-center text-sm text-gray-400">Loading…</p>
+                ) : (
+                  <CategoryTracker
+                    expenses={trackerExpenses}
+                    chartDates={trackerDates}
+                    rangeLen={trackerRangeLen}
+                  />
+                )}
+              </section>
+            </div>
+
+            {/* ── 3. Expense Log ── */}
             <section className="rounded-2xl bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 className="text-base font-semibold text-gray-800">Expense Log</h2>
@@ -333,7 +855,8 @@ export default function PnLPage() {
                 </div>
               )}
             </section>
-          </>
+
+          </div>
         )}
       </div>
     </div>
@@ -354,13 +877,7 @@ function SummaryCard({ label, value, color }: {
   )
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Food: 'bg-orange-100 text-orange-700', Salary: 'bg-purple-100 text-purple-700',
-  Supplies: 'bg-cyan-100 text-cyan-700', Gas: 'bg-yellow-100 text-yellow-700',
-  Equipment: 'bg-amber-100 text-amber-700', Misc: 'bg-gray-100 text-gray-600',
-}
-
 function CategoryBadge({ category }: { category: string }) {
-  const cls = CATEGORY_COLORS[category] ?? 'bg-gray-100 text-gray-600'
+  const cls = CAT_BADGE[category] ?? 'bg-gray-100 text-gray-600'
   return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{category}</span>
 }

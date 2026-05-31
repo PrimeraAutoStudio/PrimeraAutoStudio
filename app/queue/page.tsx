@@ -10,6 +10,8 @@ import DateRangeSelector, {
   formatRangeLabel,
   rangeForPreset,
 } from '@/app/components/DateRangeSelector'
+import ExportMenu, { ExportFormat } from '@/app/components/ExportMenu'
+import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,8 +52,9 @@ export default function QueuePage() {
   const [loading, setLoading]   = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editState, setEditState] = useState<EditState>({ status: '', notes: '' })
-  const [saving, setSaving]       = useState(false)
-  const [saveError, setSaveError] = useState('')
+  const [saving, setSaving]         = useState(false)
+  const [saveError, setSaveError]   = useState('')
+  const [exporting, setExporting]   = useState(false)
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
@@ -111,6 +114,53 @@ export default function QueuePage() {
     setEditingId(null)
   }
 
+  // ── Export ────────────────────────────────────────────────────────────────
+
+  async function handleExport(format: ExportFormat) {
+    setExporting(true)
+    const label    = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const filename = `primera-queue-${label}`
+
+    const HEADERS  = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Notes']
+    const dataRows = rows.map((r) => [
+      (r as unknown as { date?: string }).date ?? '',
+      r.time_in ?? '',
+      r.plate_number,
+      r.make ?? '',
+      r.model ?? '',
+      r.size_category,
+      r.service_name,
+      r.price,
+      r.payment_method,
+      r.status,
+      r.notes ?? '',
+    ])
+
+    if (format === 'csv') {
+      downloadCsv([HEADERS, ...dataRows], `${filename}.csv`)
+    } else if (format === 'xlsx') {
+      await downloadXlsx([{ name: 'Queue', rows: [HEADERS, ...dataRows] }], `${filename}.xlsx`)
+    } else {
+      await downloadPdf(
+        'Queue Report',
+        rangeLabel,
+        [{
+          title:   `Transactions — ${rangeLabel}`,
+          head:    HEADERS,
+          rows:    dataRows,
+          summary: [
+            { label: 'Total Cars',    value: String(totalCars) },
+            { label: 'Total Revenue', value: formatPrice(totalRevenue) },
+            { label: 'On Hand',       value: formatPrice(onHandTotal) },
+            { label: 'Deposited',     value: formatPrice(depositedTotal) },
+          ],
+        }],
+        `${filename}.pdf`
+      )
+    }
+    setExporting(false)
+  }
+
   // ── Derived labels ─────────────────────────────────────────────────────────
 
   const rangeLabel = formatRangeLabel(range)
@@ -132,15 +182,18 @@ export default function QueuePage() {
               Queue — <span style={{ color: '#B8922A' }}>{rangeLabel}</span>
             </h1>
           </div>
-          <Link
-            href="/checkin"
-            className="rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-95"
-            style={{ backgroundColor: '#B8922A' }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}
-          >
-            + New Check-In
-          </Link>
+          <div className="flex items-center gap-2">
+            <ExportMenu onExport={handleExport} loading={exporting} />
+            <Link
+              href="/checkin"
+              className="rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-95"
+              style={{ backgroundColor: '#B8922A' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}
+            >
+              + New Check-In
+            </Link>
+          </div>
         </div>
 
         {/* Date range selector */}
