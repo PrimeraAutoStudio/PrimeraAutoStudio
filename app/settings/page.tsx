@@ -15,16 +15,13 @@ interface EmployeeRow {
   id: number; full_name: string; last_name: string | null; position: string
   rest_day: string; shirt_size: string; boots_size: string; is_active: boolean
 }
-interface PayableRow {
-  id: number; name: string; amount: number; due_day: number | null; category: string
-}
+interface PayableRow { id: number; name: string; amount: number; due_day: number | null; category: string }
 interface ProfileRow {
   id: string; business_name: string; branch: string; address: string
-  contact: string; email: string; gcash_merchant: string
-  maya_merchant: string; bpi_account: string
+  contact: string; email: string; gcash_merchant: string; maya_merchant: string; bpi_account: string
 }
 
-type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile' | 'backup'
+type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile' | 'teams' | 'backup'
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
@@ -48,8 +45,8 @@ function SaveBar({ saving, saved, error, onSave }: {
       <button onClick={onSave} disabled={saving} className={btnPrimary}>
         {saving ? 'Saving…' : 'Save Changes'}
       </button>
-      {saved  && <span className="text-sm font-medium text-green-600">Saved ✓</span>}
-      {error  && <span className="text-sm text-red-500">{error}</span>}
+      {saved && <span className="text-sm font-medium text-green-600">Saved ✓</span>}
+      {error && <span className="text-sm text-red-500">{error}</span>}
     </div>
   )
 }
@@ -60,8 +57,7 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
 
 function ConfirmModal({ title, message, note, confirmLabel = 'Confirm', danger = true, onConfirm, onCancel }: {
   title: string; message: React.ReactNode; note?: string
-  confirmLabel?: string; danger?: boolean
-  onConfirm: () => void; onCancel: () => void
+  confirmLabel?: string; danger?: boolean; onConfirm: () => void; onCancel: () => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -114,8 +110,7 @@ function PriceListPanel({ onDirty }: { onDirty: () => void }) {
       const { error: e } = await supabase.from('price_list').update({ base_price: val }).eq('id', row.id)
       if (e) { setError(e.message); setSaving(false); return }
     }
-    setSaving(false); setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
+    setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 3000)
   }
 
   return (
@@ -127,8 +122,7 @@ function PriceListPanel({ onDirty }: { onDirty: () => void }) {
             <span className="w-36 shrink-0 text-sm font-medium text-gray-700">{row.size_category}</span>
             <div className="relative flex-1">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₱</span>
-              <input type="number" min="0" step="0.01"
-                value={prices[row.id] ?? ''}
+              <input type="number" min="0" step="0.01" value={prices[row.id] ?? ''}
                 onChange={(e) => { setPrices((p) => ({ ...p, [row.id]: e.target.value })); onDirty() }}
                 className={`${inputCls} pl-7`} />
             </div>
@@ -142,21 +136,19 @@ function PriceListPanel({ onDirty }: { onDirty: () => void }) {
 
 // ─── Panel: Services ─────────────────────────────────────────────────────────
 
-const NO_PRICE_SERVICE = 'Others'
-
 function ServicesPanel({ onDirty }: { onDirty: () => void }) {
-  const [rows, setRows]               = useState<ServiceRow[]>([])
+  const [rows, setRows]                     = useState<ServiceRow[]>([])
   const [sizeCategories, setSizeCategories] = useState<string[]>([])
   const [allServicePrices, setAllServicePrices] = useState<ServicePriceRow[]>([])
-  const [expandedId, setExpandedId]   = useState<number | null>(null)
-  const [editPrices, setEditPrices]   = useState<Record<string, string>>({})
-  const [matrixSaving, setMatrixSaving] = useState(false)
-  const [matrixError, setMatrixError]   = useState('')
-  const [matrixSaved, setMatrixSaved]   = useState(false)
-  const [newName, setNewName]   = useState('')
-  const [adding, setAdding]     = useState(false)
-  const [addError, setAddError] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState<ServiceRow | null>(null)
+  const [expandedId, setExpandedId]         = useState<number | null>(null)
+  const [editPrices, setEditPrices]         = useState<Record<string, string>>({})
+  const [matrixSaving, setMatrixSaving]     = useState(false)
+  const [matrixError, setMatrixError]       = useState('')
+  const [matrixSaved, setMatrixSaved]       = useState(false)
+  const [newName, setNewName]               = useState('')
+  const [adding, setAdding]                 = useState(false)
+  const [addError, setAddError]             = useState('')
+  const [confirmDelete, setConfirmDelete]   = useState<ServiceRow | null>(null)
 
   const loadData = useCallback(async () => {
     const [{ data: svData }, { data: plData }, { data: spData }] = await Promise.all([
@@ -173,8 +165,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
 
   function openMatrix(row: ServiceRow) {
     if (expandedId === row.id) { setExpandedId(null); return }
-    setExpandedId(row.id)
-    setMatrixError(''); setMatrixSaved(false)
+    setExpandedId(row.id); setMatrixError(''); setMatrixSaved(false)
     const seed: Record<string, string> = {}
     sizeCategories.forEach((sz) => {
       const match = allServicePrices.find((sp) => sp.service_name === row.name && sp.size_category === sz)
@@ -194,9 +185,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
         : await supabase.from('service_prices').insert({ service_name: row.name, size_category: sz, price: val })
       if (e) { setMatrixError(e.message); setMatrixSaving(false); return }
     }
-    setMatrixSaving(false); setMatrixSaved(true)
-    setTimeout(() => setMatrixSaved(false), 3000)
-    loadData()
+    setMatrixSaving(false); setMatrixSaved(true); setTimeout(() => setMatrixSaved(false), 3000); loadData()
   }
 
   async function toggle(row: ServiceRow) {
@@ -227,9 +216,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
       {confirmDelete && (
         <ConfirmModal title="Delete Service"
           message={<>Are you sure you want to delete <strong>{confirmDelete.name}</strong>? This cannot be undone.</>}
-          confirmLabel="Delete"
-          onConfirm={() => deleteService(confirmDelete)}
-          onCancel={() => setConfirmDelete(null)} />
+          confirmLabel="Delete" onConfirm={() => deleteService(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
       )}
       <div className="max-w-lg space-y-2">
         {rows.map((row) => (
@@ -242,15 +229,12 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
                     className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">
                     {expandedId === row.id ? 'Hide Prices' : 'Edit Prices'}
                   </button>
-                ) : (
-                  <span className="text-xs italic text-gray-400">No fixed price</span>
-                )}
+                ) : <span className="text-xs italic text-gray-400">No fixed price</span>}
                 <button onClick={() => toggle(row)}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
                   <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${row.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
-                <button onClick={() => setConfirmDelete(row)}
-                  className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
+                <button onClick={() => setConfirmDelete(row)} className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
               </div>
             </div>
             {expandedId === row.id && !isOthers(row.name) && (
@@ -286,8 +270,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="mt-6 flex max-w-md items-center gap-3">
         <input type="text" placeholder="New service name…" value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addService()}
-          className={inputCls} />
+          onKeyDown={(e) => e.key === 'Enter' && addService()} className={inputCls} />
         <button onClick={addService} disabled={adding || !newName.trim()} className={`${btnPrimary} shrink-0`}>Add</button>
       </div>
       {addError && <p className="mt-2 text-sm text-red-500">{addError}</p>}
@@ -298,7 +281,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
 // ─── Panel: Payment Methods ───────────────────────────────────────────────────
 
 function PaymentMethodsPanel() {
-  const [rows, setRows]       = useState<PaymentRow[]>([])
+  const [rows, setRows]         = useState<PaymentRow[]>([])
   const [statuses, setStatuses] = useState<Record<number, string>>({})
 
   const load = useCallback(async () => {
@@ -355,11 +338,11 @@ function PaymentMethodsPanel() {
 const EMPTY_EMP = { full_name: '', last_name: '', position: '', rest_day: '', shirt_size: '', boots_size: '', is_active: true }
 
 function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
-  const [rows, setRows]   = useState<EmployeeRow[]>([])
+  const [rows, setRows]     = useState<EmployeeRow[]>([])
   const [editId, setEditId] = useState<number | 'new' | null>(null)
-  const [form, setForm]   = useState(EMPTY_EMP)
+  const [form, setForm]     = useState(EMPTY_EMP)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError]   = useState('')
   const [confirmDeactivate, setConfirmDeactivate] = useState<EmployeeRow | null>(null)
 
   const load = useCallback(async () => {
@@ -398,33 +381,27 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">First Name *</label>
-          <input value={form.full_name} onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. Allen" />
+          <input value={form.full_name} onChange={(e) => { setForm((f) => ({ ...f, full_name: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. Allen" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Last Name</label>
-          <input value={form.last_name ?? ''} onChange={(e) => { setForm((f) => ({ ...f, last_name: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. Flores" />
+          <input value={form.last_name ?? ''} onChange={(e) => { setForm((f) => ({ ...f, last_name: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. Flores" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Position</label>
-          <input value={form.position} onChange={(e) => { setForm((f) => ({ ...f, position: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. Washer" />
+          <input value={form.position} onChange={(e) => { setForm((f) => ({ ...f, position: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. Washer" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Rest Day</label>
-          <input value={form.rest_day} onChange={(e) => { setForm((f) => ({ ...f, rest_day: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. Sunday" />
+          <input value={form.rest_day} onChange={(e) => { setForm((f) => ({ ...f, rest_day: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. Sunday" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Shirt Size</label>
-          <input value={form.shirt_size} onChange={(e) => { setForm((f) => ({ ...f, shirt_size: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. M" />
+          <input value={form.shirt_size} onChange={(e) => { setForm((f) => ({ ...f, shirt_size: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. M" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Boots Size</label>
-          <input value={form.boots_size} onChange={(e) => { setForm((f) => ({ ...f, boots_size: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. 42" />
+          <input value={form.boots_size} onChange={(e) => { setForm((f) => ({ ...f, boots_size: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. 42" />
         </div>
       </div>
       {error && <p className="text-sm text-red-500">{error}</p>}
@@ -441,16 +418,12 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
         <ConfirmModal title="Remove Employee"
           message={<>Are you sure you want to delete <strong>{confirmDeactivate.full_name}</strong>?</>}
           note="The employee record will be kept for historical records but marked as inactive."
-          confirmLabel="Remove"
-          onConfirm={() => deactivateEmployee(confirmDeactivate)}
-          onCancel={() => setConfirmDeactivate(null)} />
+          confirmLabel="Remove" onConfirm={() => deactivateEmployee(confirmDeactivate)} onCancel={() => setConfirmDeactivate(null)} />
       )}
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Employees</PanelTitle>
         {editId !== 'new' && (
-          <button onClick={() => { setEditId('new'); setForm(EMPTY_EMP); setError('') }} className={btnPrimary}>
-            + Add Employee
-          </button>
+          <button onClick={() => { setEditId('new'); setForm(EMPTY_EMP); setError('') }} className={btnPrimary}>+ Add Employee</button>
         )}
       </div>
       {editId === 'new' && <div className="mb-6">{EmpForm}</div>}
@@ -469,9 +442,7 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
-                    {row.is_active && (
-                      <button onClick={() => setConfirmDeactivate(row)} className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>
-                    )}
+                    {row.is_active && <button onClick={() => setConfirmDeactivate(row)} className="text-xs font-medium text-red-400 hover:text-red-600">Delete</button>}
                   </div>
                 </div>
                 <div className="flex gap-4 text-xs text-gray-500">
@@ -532,20 +503,15 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Name *</label>
-          <input value={form.name} onChange={(e) => { setForm((f) => ({ ...f, name: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="e.g. Electric Bill" />
+          <input value={form.name} onChange={(e) => { setForm((f) => ({ ...f, name: e.target.value })); onDirty() }} className={inputCls} placeholder="e.g. Electric Bill" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Amount (₱) *</label>
-          <input type="number" min="0" step="0.01" value={form.amount}
-            onChange={(e) => { setForm((f) => ({ ...f, amount: e.target.value })); onDirty() }}
-            className={inputCls} placeholder="0.00" />
+          <input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => { setForm((f) => ({ ...f, amount: e.target.value })); onDirty() }} className={inputCls} placeholder="0.00" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Due Day</label>
-          <input type="number" min="1" max="31" value={form.due_day}
-            onChange={(e) => setForm((f) => ({ ...f, due_day: e.target.value }))}
-            className={inputCls} placeholder="Day of month" />
+          <input type="number" min="1" max="31" value={form.due_day} onChange={(e) => setForm((f) => ({ ...f, due_day: e.target.value }))} className={inputCls} placeholder="Day of month" />
         </div>
         <div className="col-span-2">
           <label className="mb-1 block text-xs font-medium text-gray-600">Category</label>
@@ -566,20 +532,15 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <PanelTitle>Payables</PanelTitle>
-        {editId !== 'new' && (
-          <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }} className={btnPrimary}>+ Add Payable</button>
-        )}
+        {editId !== 'new' && <button onClick={() => { setEditId('new'); setForm(EMPTY_PAYABLE); setError('') }} className={btnPrimary}>+ Add Payable</button>}
       </div>
       {editId === 'new' && <div className="mb-6 max-w-md">{PayableForm}</div>}
       <div className="max-w-xl overflow-hidden rounded-xl border border-gray-100 bg-white">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Category</th>
-              <th className="px-4 py-3">Due Day</th>
-              <th className="px-4 py-3 text-right">Amount</th>
-              <th className="px-4 py-3" />
+              <th className="px-4 py-3">Name</th><th className="px-4 py-3">Category</th>
+              <th className="px-4 py-3">Due Day</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -590,9 +551,7 @@ function PayablesPanel({ onDirty }: { onDirty: () => void }) {
                   <td className="px-4 py-3 text-gray-500">{row.category}</td>
                   <td className="px-4 py-3 text-gray-500">{row.due_day ?? '—'}</td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-900">₱{row.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button>
-                  </td>
+                  <td className="px-4 py-3 text-right"><button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A] hover:text-[#D4AB4E]">Edit</button></td>
                 </tr>
                 {editId === row.id && <tr><td colSpan={5} className="px-4 py-3">{PayableForm}</td></tr>}
               </React.Fragment>
@@ -665,19 +624,99 @@ function BusinessProfilePanel({ onDirty }: { onDirty: () => void }) {
   )
 }
 
+// ─── Panel: Teams ─────────────────────────────────────────────────────────────
+
+function TeamsPanel() {
+  const [draft, setDraft]   = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
+  const [saved, setSaved]   = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  useEffect(() => {
+    supabase.from('settings').select('teams').eq('id', '1').single()
+      .then(({ data }) => { if (data?.teams) setDraft(data.teams) })
+  }, [])
+
+  function updateTeam(i: number, val: string) {
+    setDraft((d) => d.map((t, idx) => idx === i ? val : t))
+  }
+
+  function addTeam() {
+    setDraft((d) => [...d, `Team ${String.fromCharCode(65 + d.length)}`])
+  }
+
+  function removeTeam(i: number) {
+    if (draft.length <= 1) return
+    setDraft((d) => d.filter((_, idx) => idx !== i))
+  }
+
+  async function save() {
+    const clean = draft.map((t) => t.trim()).filter(Boolean)
+    if (clean.length === 0) { setError('At least one team is required.'); return }
+    setSaving(true); setError('')
+    const { error: e } = await supabase.from('settings').update({ teams: clean }).eq('id', '1')
+    setSaving(false)
+    if (e) { setError(e.message); return }
+    setDraft(clean); setSaved(true); setTimeout(() => setSaved(false), 3000)
+  }
+
+  return (
+    <div>
+      <PanelTitle>Teams</PanelTitle>
+      <p className="mb-6 text-sm text-gray-500">
+        Configure team names for the competition tracker. These appear in Check-In when assigning a car to a team, and in the Dashboard leaderboard.
+      </p>
+
+      <div className="max-w-sm space-y-3">
+        {draft.map((team, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+              style={{ backgroundColor: ['#B8922A', '#D4AB4E', '#7C5C1E', '#A0845C', '#6B4F2A'][i % 5] }}>
+              {i + 1}
+            </div>
+            <input type="text" value={team}
+              onChange={(e) => updateTeam(i, e.target.value)}
+              className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20"
+              placeholder={`Team ${String.fromCharCode(65 + i)}`} />
+            <button onClick={() => removeTeam(i)} disabled={draft.length <= 1}
+              className="text-xs font-medium text-red-400 hover:text-red-600 disabled:opacity-30">✕</button>
+          </div>
+        ))}
+
+        <button onClick={addTeam}
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 py-2.5 text-sm text-gray-500 hover:border-[#B8922A] hover:text-[#B8922A] transition-colors">
+          + Add Team
+        </button>
+      </div>
+
+      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+
+      <div className="mt-6 rounded-xl border border-gray-100 bg-gray-50 p-4 max-w-sm">
+        <p className="text-xs font-semibold text-gray-600 mb-1">How teams work</p>
+        <p className="text-xs text-gray-500">
+          When checking in a car, staff selects which team is washing it. The Dashboard leaderboard tracks cars washed and add-on services per team. Results update in real time.
+        </p>
+      </div>
+
+      <div className="mt-6 flex items-center gap-3">
+        <button onClick={save} disabled={saving} className={btnPrimary}>
+          {saving ? 'Saving…' : 'Save Teams'}
+        </button>
+        {saved && <span className="text-sm font-medium text-green-600">Saved ✓</span>}
+      </div>
+    </div>
+  )
+}
+
 // ─── Panel: Backup ────────────────────────────────────────────────────────────
 
 function BackupPanel() {
-  const [loading, setLoading] = useState(false)
-  const [status, setStatus]   = useState('')
-  const [error, setError]     = useState('')
+  const [loading, setLoading]       = useState(false)
+  const [status, setStatus]         = useState('')
+  const [error, setError]           = useState('')
   const [lastBackup, setLastBackup] = useState<string | null>(null)
 
-  const TABLES = [
-    'transactions', 'expenses', 'employees', 'payables',
-    'services', 'price_list', 'service_prices', 'payment_methods',
-    'loyalty_cards', 'settings',
-  ]
+  const TABLES = ['transactions', 'expenses', 'employees', 'payables', 'services', 'price_list', 'service_prices', 'payment_methods', 'loyalty_cards', 'settings']
 
   function toCSV(data: Record<string, unknown>[]): string {
     if (!data.length) return ''
@@ -687,9 +726,7 @@ function BackupPanel() {
         const val = row[h]
         if (val === null || val === undefined) return ''
         const str = String(val)
-        return str.includes(',') || str.includes('"') || str.includes('\n')
-          ? `"${str.replace(/"/g, '""')}"`
-          : str
+        return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str.replace(/"/g, '""')}"` : str
       }).join(',')
     )
     return [headers.join(','), ...rows].join('\n')
@@ -705,28 +742,22 @@ function BackupPanel() {
         if (e) throw new Error(`Failed to fetch ${table}: ${e.message}`)
         results[table] = data ?? []
       }
-
       const now = new Date()
       const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
       const filename = `primera-backup-${dateStr}`
 
       if (format === 'csv') {
-        // ZIP-like: download each table as separate CSV
         setStatus('Generating CSV files…')
         for (const table of TABLES) {
           const csv = toCSV(results[table])
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
           const url = URL.createObjectURL(blob)
           const link = document.createElement('a')
-          link.href = url
-          link.download = `${filename}-${table}.csv`
-          document.body.appendChild(link)
-          link.click()
-          document.body.removeChild(link)
-          URL.revokeObjectURL(url)
+          link.href = url; link.download = `${filename}-${table}.csv`
+          document.body.appendChild(link); link.click()
+          document.body.removeChild(link); URL.revokeObjectURL(url)
         }
       } else {
-        // Single Excel file with one sheet per table
         setStatus('Generating Excel file…')
         const XLSX = await import('xlsx')
         const wb = XLSX.utils.book_new()
@@ -736,12 +767,9 @@ function BackupPanel() {
         }
         XLSX.writeFile(wb, `${filename}.xlsx`)
       }
-
-      setLastBackup(new Date().toLocaleString('en-PH'))
-      setStatus('')
+      setLastBackup(new Date().toLocaleString('en-PH')); setStatus('')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Backup failed')
-      setStatus('')
+      setError(e instanceof Error ? e.message : 'Backup failed'); setStatus('')
     }
     setLoading(false)
   }
@@ -749,68 +777,33 @@ function BackupPanel() {
   return (
     <div>
       <PanelTitle>Data Backup</PanelTitle>
-
       <div className="max-w-lg space-y-6">
-        {/* Info card */}
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
           <p className="text-sm font-semibold text-blue-800">What gets backed up</p>
-          <p className="mt-1 text-xs text-blue-600">
-            All tables: transactions, expenses, employees, payables, services, price list, service prices, payment methods, loyalty cards, and settings.
-          </p>
-          <p className="mt-2 text-xs text-blue-500">
-            Recommended: back up at the end of each month and store in Google Drive.
-          </p>
+          <p className="mt-1 text-xs text-blue-600">All tables: transactions, expenses, employees, payables, services, price list, service prices, payment methods, loyalty cards, and settings.</p>
+          <p className="mt-2 text-xs text-blue-500">Recommended: back up at the end of each month and store in Google Drive.</p>
         </div>
-
-        {/* Table list */}
         <div className="rounded-xl border border-gray-100 bg-white p-4">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Tables included</p>
           <div className="flex flex-wrap gap-2">
-            {TABLES.map((t) => (
-              <span key={t} className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">{t}</span>
-            ))}
+            {TABLES.map((t) => <span key={t} className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">{t}</span>)}
           </div>
         </div>
-
-        {/* Download buttons */}
         <div className="space-y-3">
           <p className="text-sm font-semibold text-gray-700">Download backup as:</p>
-          <div className="flex gap-3">
-            <button onClick={() => downloadBackup('xlsx')} disabled={loading}
-              className={`${btnPrimary} flex items-center gap-2`}>
-              {loading ? (
-                <span className="animate-pulse">{status || 'Working…'}</span>
-              ) : (
-                <>📊 Excel (.xlsx) — All tables in one file</>
-              )}
-            </button>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={() => downloadBackup('csv')} disabled={loading}
-              className={`${btnSecondary} flex items-center gap-2`}>
-              {loading ? '…' : '📄 CSV — Separate file per table'}
-            </button>
-          </div>
+          <button onClick={() => downloadBackup('xlsx')} disabled={loading} className={`${btnPrimary} flex items-center gap-2`}>
+            {loading ? <span className="animate-pulse">{status || 'Working…'}</span> : <>📊 Excel (.xlsx) — All tables in one file</>}
+          </button>
+          <button onClick={() => downloadBackup('csv')} disabled={loading} className={`${btnSecondary} flex items-center gap-2`}>
+            {loading ? '…' : '📄 CSV — Separate file per table'}
+          </button>
         </div>
-
-        {/* Status / error */}
-        {status && !error && (
-          <div className="flex items-center gap-2 text-sm text-[#B8922A]">
-            <span className="animate-spin">⟳</span>
-            <span>{status}</span>
-          </div>
-        )}
+        {status && !error && <div className="flex items-center gap-2 text-sm text-[#B8922A]"><span className="animate-spin">⟳</span><span>{status}</span></div>}
         {error && <p className="text-sm text-red-500">⚠ {error}</p>}
-        {lastBackup && !loading && (
-          <p className="text-xs text-green-600">✓ Last backup downloaded: {lastBackup}</p>
-        )}
-
-        {/* Manual Supabase backup tip */}
+        {lastBackup && !loading && <p className="text-xs text-green-600">✓ Last backup downloaded: {lastBackup}</p>}
         <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
           <p className="text-xs font-semibold text-gray-600">Also recommended</p>
-          <p className="mt-1 text-xs text-gray-500">
-            Go to <strong>Supabase → Settings → Backups</strong> to download a full database backup. Supabase keeps 1 day of automatic backups on the free plan.
-          </p>
+          <p className="mt-1 text-xs text-gray-500">Go to <strong>Supabase → Settings → Backups</strong> to download a full database backup.</p>
         </div>
       </div>
     </div>
@@ -819,30 +812,31 @@ function BackupPanel() {
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-const SECTIONS: { id: Section; label: string; emoji: string }[] = [
-  { id: 'price_list',      label: 'Price List',      emoji: '💲' },
-  { id: 'services',        label: 'Services',        emoji: '🛠' },
-  { id: 'payment_methods', label: 'Payment Methods', emoji: '💳' },
-  { id: 'employees',       label: 'Employees',       emoji: '👥' },
-  { id: 'payables',        label: 'Payables',        emoji: '📋' },
-  { id: 'profile',         label: 'Business Profile',emoji: '🏢' },
-  { id: 'backup',          label: '⬇ Backup',        emoji: '' },
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'price_list',      label: 'Price List' },
+  { id: 'services',        label: 'Services' },
+  { id: 'payment_methods', label: 'Payment Methods' },
+  { id: 'employees',       label: 'Employees' },
+  { id: 'payables',        label: 'Payables' },
+  { id: 'profile',         label: 'Business Profile' },
+  { id: 'teams',           label: '🏆 Teams' },
+  { id: 'backup',          label: '⬇ Backup' },
 ]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [active, setActive]     = useState<Section>('price_list')
-  const [isDirty, setIsDirty]   = useState(false)
-  const [pendingSection, setPendingSection] = useState<Section | null>(null)
-  const [showLeaveWarning, setShowLeaveWarning] = useState(false)
+  const [active, setActive]                       = useState<Section>('price_list')
+  const [isDirty, setIsDirty]                     = useState(false)
+  const [pendingSection, setPendingSection]       = useState<Section | null>(null)
+  const [showLeaveWarning, setShowLeaveWarning]   = useState(false)
 
   const markDirty = useCallback(() => setIsDirty(true), [])
 
   function handleNavClick(id: Section) {
     if (id === active) return
     if (isDirty) { setPendingSection(id); setShowLeaveWarning(true) }
-    else { setActive(id) }
+    else setActive(id)
   }
 
   function confirmLeave() {
@@ -861,22 +855,20 @@ export default function SettingsPage() {
             confirmLabel="Leave Without Saving" danger={false}
             onConfirm={confirmLeave} onCancel={cancelLeave} />
         )}
-
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
           <p className="text-sm text-gray-400">Manage pricing, staff, and business details</p>
         </div>
-
         <div className="flex gap-6">
-          {/* Left sub-nav */}
           <nav className="w-48 shrink-0">
             <ul className="space-y-0.5">
               {SECTIONS.map(({ id, label }) => {
                 const isActive = active === id
-                const isBackup = id === 'backup'
+                const isDivider = id === 'teams' || id === 'backup'
                 return (
                   <li key={id}>
-                    {isBackup && <div className="my-2 border-t border-gray-100" />}
+                    {id === 'teams' && <div className="my-2 border-t border-gray-100" />}
+                    {id === 'backup' && <div className="my-1" />}
                     <button onClick={() => handleNavClick(id)}
                       className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
                       style={{
@@ -892,7 +884,6 @@ export default function SettingsPage() {
             </ul>
           </nav>
 
-          {/* Panel area */}
           <div className="min-w-0 flex-1 rounded-2xl bg-white p-6 shadow-sm">
             {active === 'price_list'      && <PriceListPanel      onDirty={markDirty} />}
             {active === 'services'        && <ServicesPanel        onDirty={markDirty} />}
@@ -900,12 +891,12 @@ export default function SettingsPage() {
             {active === 'employees'       && <EmployeesPanel       onDirty={markDirty} />}
             {active === 'payables'        && <PayablesPanel        onDirty={markDirty} />}
             {active === 'profile'         && <BusinessProfilePanel onDirty={markDirty} />}
+            {active === 'teams'           && <TeamsPanel />}
             {active === 'backup'          && <BackupPanel />}
           </div>
         </div>
       </div>
 
-      {/* Floating unsaved changes banner */}
       {isDirty && (
         <div className="fixed bottom-0 left-[220px] right-0 z-30 flex items-center justify-between border-t border-amber-200 bg-amber-50 px-6 py-3 shadow-lg">
           <div className="flex items-center gap-2">

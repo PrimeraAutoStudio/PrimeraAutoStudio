@@ -26,6 +26,7 @@ interface Transaction {
   payment_method: string
   status: string
   notes: string | null
+  team: string | null
 }
 
 interface ServiceRow       { name: string }
@@ -39,6 +40,8 @@ interface EditState {
   payment_method: string
   status: string
   notes: string
+  time_in: string
+  team: string
 }
 
 function formatTime(t: string | null) {
@@ -54,7 +57,6 @@ function formatPrice(n: number) {
 
 const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 
-// Map old service names to new multi-select format
 function mapServiceName(raw: string): string[] {
   const map: Record<string, string[]> = {
     'Basic':                      ['Basic Wash'],
@@ -65,8 +67,6 @@ function mapServiceName(raw: string): string[] {
     'Body Wash':                  ['Body Wash'],
     'Others':                     ['Others'],
     'Wax Only':                   ['Wax'],
-    'Basic Wash, Wax Only':       ['Basic Wash', 'Wax'],
-    'Body Wash, Wax Only':        ['Body Wash', 'Wax'],
   }
   const trimmed = raw.trim()
   if (map[trimmed]) return map[trimmed]
@@ -75,10 +75,14 @@ function mapServiceName(raw: string): string[] {
 
 function parseServiceNames(serviceNameStr: string): string[] {
   if (!serviceNameStr) return []
-  return serviceNameStr
-    .split(',')
-    .flatMap((s) => mapServiceName(s.trim()))
-    .filter(Boolean)
+  return serviceNameStr.split(',').flatMap((s) => mapServiceName(s.trim())).filter(Boolean)
+}
+
+// Status badge colors
+function statusColor(status: string) {
+  if (status === 'Deposited') return 'bg-green-100 text-green-700'
+  if (status === 'Pending') return 'bg-blue-100 text-blue-700'
+  return 'bg-amber-100 text-amber-700' // On Hand
 }
 
 export default function QueuePage() {
@@ -87,13 +91,14 @@ export default function QueuePage() {
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '',
+    selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '', time_in: '', team: '',
   })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [teams, setTeams] = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
 
   const [services, setServices] = useState<ServiceRow[]>([])
   const [servicePrices, setServicePrices] = useState<ServicePriceRow[]>([])
@@ -106,11 +111,13 @@ export default function QueuePage() {
       supabase.from('service_prices').select('service_name, size_category, price'),
       supabase.from('price_list').select('size_category, base_price').eq('is_active', true).order('sort_order'),
       supabase.from('payment_methods').select('name').eq('is_active', true).order('sort_order'),
-    ]).then(([sv, sp, pl, pm]) => {
+      supabase.from('settings').select('teams').eq('id', '1').single(),
+    ]).then(([sv, sp, pl, pm, st]) => {
       if (sv.data) setServices(sv.data)
       if (sp.data) setServicePrices(sp.data)
       if (pl.data) setSizes(pl.data)
       if (pm.data) setPaymentMethods(pm.data)
+      if (st.data?.teams) setTeams(st.data.teams)
     })
   }, [])
 
@@ -118,7 +125,7 @@ export default function QueuePage() {
     if (!range.from || !range.to) return
     const { data, error } = await supabase
       .from('transactions')
-      .select('id, date, time_in, plate_number, make, model, size_category, service_name, price, payment_method, status, notes')
+      .select('id, date, time_in, plate_number, make, model, size_category, service_name, price, payment_method, status, notes, team')
       .gte('date', range.from)
       .lte('date', range.to)
       .order('date', { ascending: true })
@@ -141,12 +148,11 @@ export default function QueuePage() {
   const totalRevenue   = rows.reduce((s, r) => s + r.price, 0)
   const onHandTotal    = rows.filter((r) => r.status === 'On Hand').reduce((s, r) => s + r.price, 0)
   const depositedTotal = rows.filter((r) => r.status === 'Deposited').reduce((s, r) => s + r.price, 0)
+  const pendingTotal   = rows.filter((r) => r.status === 'Pending').reduce((s, r) => s + r.price, 0)
 
   function priceForService(serviceName: string, sizeCategory: string): number {
     if (isOthers(serviceName)) return 0
-    const match = servicePrices.find(
-      (sp) => sp.size_category === sizeCategory && sp.service_name === serviceName
-    )
+    const match = servicePrices.find((sp) => sp.size_category === sizeCategory && sp.service_name === serviceName)
     if (match) return match.price
     const base = sizes.find((s) => s.size_category === sizeCategory)
     return base ? base.base_price : 0
@@ -155,13 +161,8 @@ export default function QueuePage() {
   const editRow = rows.find((r) => r.id === editingId)
   const sizeForEdit = editRow?.size_category ?? ''
 
-  const autoTotal = editState.selectedServices.reduce(
-    (sum, svc) => sum + priceForService(svc, sizeForEdit), 0
-  )
-
-  const effectivePrice = editState.manualPrice !== ''
-    ? parseFloat(editState.manualPrice) || 0
-    : autoTotal
+  const autoTotal = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
+  const effectivePrice = editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
   function startEdit(row: Transaction) {
     const seeded = parseServiceNames(row.service_name)
@@ -172,6 +173,8 @@ export default function QueuePage() {
       payment_method: row.payment_method,
       status: row.status,
       notes: row.notes ?? '',
+      time_in: row.time_in ?? '',
+      team: row.team ?? '',
     })
     setSaveError('')
   }
@@ -200,24 +203,21 @@ export default function QueuePage() {
   async function saveEdit(id: string) {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
-    const { error } = await supabase
-      .from('transactions')
-      .update({
-        service_name: serviceLabel,
-        price: effectivePrice,
-        payment_method: editState.payment_method,
-        status: editState.status,
-        notes: editState.notes,
-      })
-      .eq('id', id)
+    const { error } = await supabase.from('transactions').update({
+      service_name: serviceLabel,
+      price: effectivePrice,
+      payment_method: editState.payment_method,
+      status: editState.status,
+      notes: editState.notes,
+      time_in: editState.time_in,
+      team: editState.team || null,
+    }).eq('id', id)
     setSaving(false)
     if (error) { setSaveError(error.message); return }
     setRows((prev) => prev.map((r) =>
-      r.id === id
-        ? { ...r, service_name: serviceLabel, price: effectivePrice,
-            payment_method: editState.payment_method,
-            status: editState.status, notes: editState.notes }
-        : r
+      r.id === id ? { ...r, service_name: serviceLabel, price: effectivePrice,
+        payment_method: editState.payment_method, status: editState.status,
+        notes: editState.notes, time_in: editState.time_in, team: editState.team || null } : r
     ))
     setEditingId(null)
   }
@@ -226,11 +226,11 @@ export default function QueuePage() {
     setExporting(true)
     const label = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
     const filename = `primera-queue-${label}`
-    const HEADERS = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Notes']
+    const HEADERS = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Team', 'Notes']
     const dataRows = rows.map((r) => [
       r.date ?? '', r.time_in ?? '', r.plate_number,
       r.make ?? '', r.model ?? '', r.size_category,
-      r.service_name, r.price, r.payment_method, r.status, r.notes ?? '',
+      r.service_name, r.price, r.payment_method, r.status, r.team ?? '', r.notes ?? '',
     ])
     if (format === 'csv') {
       downloadCsv([HEADERS, ...dataRows], `${filename}.csv`)
@@ -244,6 +244,7 @@ export default function QueuePage() {
           { label: 'Total Revenue', value: formatPrice(totalRevenue) },
           { label: 'On Hand', value: formatPrice(onHandTotal) },
           { label: 'Deposited', value: formatPrice(depositedTotal) },
+          { label: 'Pending', value: formatPrice(pendingTotal) },
         ],
       }], `${filename}.pdf`)
     }
@@ -254,9 +255,7 @@ export default function QueuePage() {
   const isSingleDay = range.from === range.to
   const carLabel = isSingleDay ? 'Cars' : 'Total Cars'
 
-  const fullInputCls =
-    'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
-    'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
+  const fullInputCls = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
   return (
     <div className="px-6 py-6">
@@ -281,11 +280,13 @@ export default function QueuePage() {
           <DateRangeSelector value={range} onChange={(r) => { setRange(r); setEditingId(null) }} />
         </div>
 
-        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {/* Summary cards — now includes Pending */}
+        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <SummaryCard label={carLabel}      value={String(totalCars)} />
           <SummaryCard label="Total Revenue" value={formatPrice(totalRevenue)} highlight />
           <SummaryCard label="On Hand"       value={formatPrice(onHandTotal)} />
           <SummaryCard label="Deposited"     value={formatPrice(depositedTotal)} />
+          <SummaryCard label="Pending"       value={formatPrice(pendingTotal)} />
         </div>
 
         {loading ? (
@@ -313,11 +314,10 @@ export default function QueuePage() {
                     {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
                     {' '}· {editRow.size_category}
                   </p>
-                  <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">
-                    ✕ Cancel
-                  </button>
+                  <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
                 </div>
 
+                {/* Services */}
                 <div className="mb-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
                   <div className="flex flex-wrap gap-2">
@@ -325,42 +325,28 @@ export default function QueuePage() {
                       const selected = editState.selectedServices.includes(svc.name)
                       const unitPrice = priceForService(svc.name, sizeForEdit)
                       return (
-                        <button key={svc.name} type="button"
-                          onClick={() => toggleEditService(svc.name)}
+                        <button key={svc.name} type="button" onClick={() => toggleEditService(svc.name)}
                           className="flex flex-col items-start rounded-xl border px-3 py-2 text-left text-xs transition-all"
-                          style={{
-                            borderColor: selected ? '#B8922A' : '#e5e7eb',
-                            backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
-                            color: selected ? '#B8922A' : '#374151',
-                          }}>
+                          style={{ borderColor: selected ? '#B8922A' : '#e5e7eb', backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff', color: selected ? '#B8922A' : '#374151' }}>
                           <span className="font-semibold">{svc.name}</span>
                           {!isOthers(svc.name) && unitPrice > 0 && (
                             <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
                           )}
-                          {isOthers(svc.name) && (
-                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
-                          )}
-                          {!isOthers(svc.name) && unitPrice === 0 && sizeForEdit && (
-                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>no price set</span>
-                          )}
+                          {isOthers(svc.name) && <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>}
                         </button>
                       )
                     })}
                   </div>
-                  {!sizeForEdit && (
-                    <p className="mt-2 text-xs text-amber-600">⚠ No size category set — prices cannot be calculated</p>
-                  )}
                 </div>
 
+                {/* Price breakdown */}
                 {editState.selectedServices.length > 0 && (
                   <div className="mb-4 rounded-xl border border-gray-200 bg-white px-4 py-3">
                     <div className="mb-2 space-y-1">
                       {editState.selectedServices.map((svc) => (
                         <div key={svc} className="flex justify-between text-xs text-gray-600">
                           <span>{svc}</span>
-                          {isOthers(svc)
-                            ? <span className="italic text-gray-400">manual</span>
-                            : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
+                          {isOthers(svc) ? <span className="italic text-gray-400">manual</span> : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
                         </div>
                       ))}
                     </div>
@@ -369,9 +355,7 @@ export default function QueuePage() {
                       <span style={{ color: '#B8922A' }}>{formatPrice(autoTotal)}</span>
                     </div>
                     <div className="mt-2">
-                      <label className="mb-1 block text-xs font-medium text-gray-500">
-                        Price Override — leave blank to use auto total
-                      </label>
+                      <label className="mb-1 block text-xs font-medium text-gray-500">Price Override — leave blank to use auto total</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
                         <input type="number" min="0" step="0.01"
@@ -380,34 +364,54 @@ export default function QueuePage() {
                           placeholder={String(autoTotal)}
                           className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-6 pr-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none" />
                       </div>
-                      <p className="mt-0.5 text-xs text-gray-400">
-                        Charging: <strong style={{ color: '#B8922A' }}>{formatPrice(effectivePrice)}</strong>
-                      </p>
+                      <p className="mt-0.5 text-xs text-gray-400">Charging: <strong style={{ color: '#B8922A' }}>{formatPrice(effectivePrice)}</strong></p>
                     </div>
                   </div>
                 )}
 
+                {/* Fields grid */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {/* Time In override */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-500">Time In</label>
+                    <input type="time"
+                      value={editState.time_in}
+                      onChange={(e) => setEditState((s) => ({ ...s, time_in: e.target.value }))}
+                      className={fullInputCls} />
+                  </div>
+                  {/* Payment Method */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Payment Method</label>
                     <select value={editState.payment_method}
                       onChange={(e) => setEditState((s) => ({ ...s, payment_method: e.target.value }))}
                       className={fullInputCls}>
-                      {paymentMethods.map((pm) => (
-                        <option key={pm.name} value={pm.name}>{pm.name}</option>
-                      ))}
+                      <option value="Pending">— Pending —</option>
+                      {paymentMethods.map((pm) => <option key={pm.name} value={pm.name}>{pm.name}</option>)}
                     </select>
                   </div>
+                  {/* Status */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
                     <select value={editState.status}
                       onChange={(e) => setEditState((s) => ({ ...s, status: e.target.value }))}
                       className={fullInputCls}>
+                      <option value="Pending">Pending</option>
                       <option value="On Hand">On Hand</option>
                       <option value="Deposited">Deposited</option>
                     </select>
                   </div>
-                  <div className="sm:col-span-2">
+                  {/* Team */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-500">Team</label>
+                    <select value={editState.team}
+                      onChange={(e) => setEditState((s) => ({ ...s, team: e.target.value }))}
+                      className={fullInputCls}>
+                      <option value="">— No Team —</option>
+                      {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  {/* Notes */}
+                  <div className="sm:col-span-4">
                     <label className="mb-1 block text-xs font-medium text-gray-500">Notes</label>
                     <input type="text" value={editState.notes}
                       onChange={(e) => setEditState((s) => ({ ...s, notes: e.target.value }))}
@@ -432,8 +436,9 @@ export default function QueuePage() {
               </div>
             )}
 
+            {/* Table */}
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
+              <table className="w-full min-w-[1000px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
                     <th className="px-4 py-3">Date</th>
@@ -445,6 +450,7 @@ export default function QueuePage() {
                     <th className="px-4 py-3">Price</th>
                     <th className="px-4 py-3">Payment</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Team</th>
                     <th className="px-4 py-3">Notes</th>
                     <th className="px-4 py-3" />
                   </tr>
@@ -465,8 +471,11 @@ export default function QueuePage() {
                         <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.size_category}</td>
                         <td className="px-4 py-3 text-gray-700">{row.service_name}</td>
                         <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{formatPrice(row.price)}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.payment_method}</td>
-                        <td className="whitespace-nowrap px-4 py-3"><StatusBadge status={row.status} /></td>
+                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.payment_method === 'Pending' ? <span className="text-blue-400 italic">Pending</span> : row.payment_method}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusColor(row.status)}`}>{row.status}</span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-gray-500 text-xs">{row.team || '—'}</td>
                         <td className="px-4 py-3 text-gray-500">{row.notes || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           {isEditing ? (
@@ -501,6 +510,7 @@ export default function QueuePage() {
         )}
       </div>
 
+      {/* Delete confirmation modal */}
       {confirmDeleteId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
@@ -529,15 +539,5 @@ function SummaryCard({ label, value, highlight = false }: { label: string; value
       <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
       <p className={`mt-1 text-xl font-bold ${highlight ? 'text-[#B8922A]' : 'text-gray-900'}`}>{value}</p>
     </div>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-      status === 'Deposited' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-    }`}>
-      {status}
-    </span>
   )
 }
