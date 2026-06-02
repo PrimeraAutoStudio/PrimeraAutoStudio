@@ -15,16 +15,17 @@ import { downloadCsv, downloadXlsx, downloadPdf } from '@/lib/export'
 interface Transaction {
   date: string; price: number; status: string
   service_name: string; payment_method: string; team: string | null
+  size_category: string
 }
+
+interface ServicePriceRow { service_name: string; size_category: string; price: number }
 
 const PAYMENT_COLORS: Record<string, string> = {
   Cash: '#B8922A', GCash: '#3b82f6', Maya: '#22c55e', BPI: '#a855f7',
 }
 
-// Add-on services that count for bonus points in competition
-const ADDON_SERVICES = ['Wax', 'Bac-2-Zero', 'Engine Detailing', 'Underchassis Detailing',
-  'Underchassis Cleaning', 'Glass Detailing', 'Headlight Cleaning', 'Waterless Engine Cleaning',
-  'Exterior Detailing', 'Interior Detailing']
+// Base services — everything else is an add-on
+const BASE_SERVICES = ['Basic Wash', 'Body Wash', 'Others']
 
 const TEAM_COLORS = ['#B8922A', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#f59e0b']
 
@@ -44,6 +45,10 @@ function datesBetween(from: string, to: string): string[] {
   return dates
 }
 
+function isAddon(svc: string): boolean {
+  return !BASE_SERVICES.some((b) => b.toLowerCase() === svc.trim().toLowerCase())
+}
+
 function StatCard({ label, value, sub, accent = false }: {
   label: string; value: string; sub?: string; accent?: boolean
 }) {
@@ -60,23 +65,32 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">{children}</h2>
 }
 
+interface TeamStats {
+  cars: number
+  revenue: number
+  addons: number
+  addonMap: Record<string, { count: number; revenue: number }>
+}
+
 export default function DashboardPage() {
   const now      = new Date()
   const todayStr = isoDate(now)
 
-  const [range, setRange]         = useState<DateRange>(rangeForPreset('today'))
-  const [txRange, setTxRange]     = useState<Transaction[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [exporting, setExporting] = useState(false)
-  const [teams, setTeams]         = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
+  const [range, setRange]           = useState<DateRange>(rangeForPreset('today'))
+  const [txRange, setTxRange]       = useState<Transaction[]>([])
+  const [servicePrices, setServicePrices] = useState<ServicePriceRow[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [exporting, setExporting]   = useState(false)
+  const [teams, setTeams]           = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
+  const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
 
-  // Live stats — always today
+  // Live stats
   const [liveTx, setLiveTx]           = useState<Transaction[]>([])
   const [liveLoading, setLiveLoading] = useState(true)
 
   const fetchLive = useCallback(async () => {
     const { data } = await supabase.from('transactions')
-      .select('date, price, status, service_name, payment_method, team').eq('date', todayStr)
+      .select('date, price, status, service_name, payment_method, team, size_category').eq('date', todayStr)
     setLiveTx(data ?? []); setLiveLoading(false)
   }, [todayStr])
 
@@ -97,23 +111,33 @@ export default function DashboardPage() {
   })
   const liveTopServices = Object.entries(liveSvcMap).sort((a, b) => b[1] - a[1]).slice(0, 3)
 
-  // Fetch range data + teams
+  // Fetch range data
   useEffect(() => {
     if (!range.from || !range.to) return
     async function load() {
       setLoading(true)
-      const [{ data: txR }, { data: st }] = await Promise.all([
+      const [{ data: txR }, { data: st }, { data: sp }] = await Promise.all([
         supabase.from('transactions')
-          .select('date, price, status, service_name, payment_method, team')
+          .select('date, price, status, service_name, payment_method, team, size_category')
           .gte('date', range.from).lte('date', range.to),
         supabase.from('settings').select('teams').eq('id', '1').single(),
+        supabase.from('service_prices').select('service_name, size_category, price'),
       ])
       setTxRange(txR ?? [])
       if (st?.teams) setTeams(st.teams)
+      if (sp) setServicePrices(sp)
       setLoading(false)
     }
     load()
   }, [range])
+
+  // Helper: look up price for a service + size
+  function priceFor(svcName: string, sizeCat: string): number {
+    const match = servicePrices.find(
+      (sp) => sp.service_name === svcName && sp.size_category === sizeCat
+    )
+    return match?.price ?? 0
+  }
 
   // Snapshot stats
   const isSingleDay    = range.from === range.to
@@ -125,7 +149,7 @@ export default function DashboardPage() {
   const onHandTotal    = txRange.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
   const depositedTotal = txRange.filter((t) => t.status === 'Deposited').reduce((s, t) => s + t.price, 0)
 
-  // Revenue by day chart
+  // Revenue by day
   const rangeDates    = range.from && range.to ? datesBetween(range.from, range.to) : [todayStr]
   const revenueByDate: Record<string, number> = {}
   const carsByDate:    Record<string, number> = {}
@@ -133,11 +157,11 @@ export default function DashboardPage() {
     revenueByDate[t.date] = (revenueByDate[t.date] ?? 0) + t.price
     carsByDate[t.date]    = (carsByDate[t.date] ?? 0) + 1
   })
-  const chartRevenue    = rangeDates.map((d) => revenueByDate[d] ?? 0)
-  const chartCars       = rangeDates.map((d) => carsByDate[d] ?? 0)
-  const maxRevenue      = Math.max(...chartRevenue, 1)
-  const busiestIdx      = chartCars.indexOf(Math.max(...chartCars))
-  const busiestDay      = chartCars[busiestIdx] > 0
+  const chartRevenue = rangeDates.map((d) => revenueByDate[d] ?? 0)
+  const chartCars    = rangeDates.map((d) => carsByDate[d] ?? 0)
+  const maxRevenue   = Math.max(...chartRevenue, 1)
+  const busiestIdx   = chartCars.indexOf(Math.max(...chartCars))
+  const busiestDay   = chartCars[busiestIdx] > 0
     ? new Date(rangeDates[busiestIdx] + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
     : '—'
   const labelStep = rangeDates.length <= 7 ? 1 : rangeDates.length <= 14 ? 2 : rangeDates.length <= 31 ? 4 : 7
@@ -162,27 +186,31 @@ export default function DashboardPage() {
   const paymentEntries = Object.entries(paymentMap).sort((a, b) => b[1] - a[1])
 
   // ── Team Leaderboard ──────────────────────────────────────────────────────
-  interface TeamStats { cars: number; revenue: number; addons: number }
 
   const teamStats: Record<string, TeamStats> = {}
-  teams.forEach((t) => { teamStats[t] = { cars: 0, revenue: 0, addons: 0 } })
+  teams.forEach((t) => { teamStats[t] = { cars: 0, revenue: 0, addons: 0, addonMap: {} } })
 
   txRange.forEach((t) => {
     if (!t.team) return
     const key = t.team
-    if (!teamStats[key]) teamStats[key] = { cars: 0, revenue: 0, addons: 0 }
+    if (!teamStats[key]) teamStats[key] = { cars: 0, revenue: 0, addons: 0, addonMap: {} }
     teamStats[key].cars++
     teamStats[key].revenue += t.price
-    // Count add-on services
-    const svcs = t.service_name.split(',').map((s) => s.trim())
+
+    // Split services and count each add-on individually
+    const svcs = t.service_name.split(',').map((s) => s.trim()).filter(Boolean)
     svcs.forEach((svc) => {
-      if (ADDON_SERVICES.some((a) => svc.toLowerCase().includes(a.toLowerCase()))) {
-        teamStats[key].addons++
-      }
+      if (!isAddon(svc)) return
+      // Count this add-on
+      teamStats[key].addons++
+      if (!teamStats[key].addonMap[svc]) teamStats[key].addonMap[svc] = { count: 0, revenue: 0 }
+      teamStats[key].addonMap[svc].count++
+      // Look up price for this add-on using size_category from the transaction
+      const addonPrice = priceFor(svc, t.size_category)
+      teamStats[key].addonMap[svc].revenue += addonPrice
     })
   })
 
-  // Sort teams by cars desc, then addons as tiebreaker
   const sortedTeams = teams
     .filter((t) => teamStats[t])
     .sort((a, b) => {
@@ -190,9 +218,7 @@ export default function DashboardPage() {
       return diff !== 0 ? diff : teamStats[b].addons - teamStats[a].addons
     })
 
-  const maxTeamCars = Math.max(...sortedTeams.map((t) => teamStats[t].cars), 1)
-
-  // Cars without team
+  const maxTeamCars    = Math.max(...sortedTeams.map((t) => teamStats[t].cars), 1)
   const unassignedCars = txRange.filter((t) => !t.team).length
 
   // Export
@@ -209,9 +235,9 @@ export default function DashboardPage() {
       ['On Hand', formatPHP(onHandTotal)],
       ['Deposited', formatPHP(depositedTotal)],
     ]
-    const serviceRows = topServices.map(([name, { count, revenue }], i) => [i + 1, name, count, formatPHP(revenue)])
-    const paymentRows = paymentEntries.map(([method, amount]) => [method, formatPHP(amount), `${((amount / (paymentTotal || 1)) * 100).toFixed(1)}%`])
-    const teamRows = sortedTeams.map((t, i) => [i + 1, t, teamStats[t].cars, teamStats[t].addons, formatPHP(teamStats[t].revenue)])
+    const serviceRows  = topServices.map(([name, { count, revenue }], i) => [i + 1, name, count, formatPHP(revenue)])
+    const paymentRows  = paymentEntries.map(([method, amount]) => [method, formatPHP(amount), `${((amount / (paymentTotal || 1)) * 100).toFixed(1)}%`])
+    const teamRows     = sortedTeams.map((t, i) => [i + 1, t, teamStats[t].cars, teamStats[t].addons, formatPHP(teamStats[t].revenue)])
 
     if (fmt === 'csv') {
       downloadCsv([['=== SUMMARY ==='], ...summaryRows, [], ['=== TOP SERVICES ==='], ['#', 'Service', 'Cars', 'Revenue'], ...serviceRows, [], ['=== PAYMENT BREAKDOWN ==='], ['Method', 'Amount', '%'], ...paymentRows, [], ['=== TEAM LEADERBOARD ==='], ['#', 'Team', 'Cars', 'Add-ons', 'Revenue'], ...teamRows], `${filename}.csv`)
@@ -291,11 +317,13 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="overflow-x-auto">
-              <div className="flex items-end gap-[3px]" style={{ height: '140px', paddingTop: '32px', minWidth: rangeDates.length > 14 ? `${rangeDates.length * 20}px` : 'auto' }}>
+              <div className="flex items-end gap-[3px]"
+                style={{ height: '140px', paddingTop: '32px', minWidth: rangeDates.length > 14 ? `${rangeDates.length * 20}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
-                  const rev = chartRevenue[i]; const isToday = dateStr === todayStr
+                  const rev       = chartRevenue[i]
+                  const isToday   = dateStr === todayStr
                   const heightPct = rev > 0 ? Math.max((rev / maxRevenue) * 100, 5) : 0
-                  const dayNum = parseInt(dateStr.split('-')[2], 10)
+                  const dayNum    = parseInt(dateStr.split('-')[2], 10)
                   const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
                   return (
                     <div key={dateStr} className="group relative flex flex-1 flex-col items-center" style={{ minWidth: '16px' }}>
@@ -310,7 +338,8 @@ export default function DashboardPage() {
                       </span>
                       <div className="w-full rounded-t"
                         style={{ height: rev === 0 ? '2px' : `${heightPct}%`, backgroundColor: isToday ? '#B8922A' : rev > 0 ? '#EDD98A' : '#f3f4f6' }} />
-                      <span className="mt-1 text-[9px]" style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
+                      <span className="mt-1 text-[9px]"
+                        style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
                         {showLabel ? dayNum : ''}
                       </span>
                     </div>
@@ -329,44 +358,101 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             {sortedTeams.length === 0 || sortedTeams.every((t) => teamStats[t].cars === 0) ? (
-              <p className="py-6 text-center text-sm text-gray-400">No team data for this period. Assign teams during check-in.</p>
+              <p className="py-6 text-center text-sm text-gray-400">
+                No team data for this period. Assign teams during check-in.
+              </p>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {sortedTeams.map((team, i) => {
-                  const stats = teamStats[team]
-                  const barPct = maxTeamCars > 0 ? (stats.cars / maxTeamCars) * 100 : 0
-                  const color = TEAM_COLORS[i % TEAM_COLORS.length]
-                  const isFirst = i === 0 && stats.cars > 0
+                  const stats      = teamStats[team]
+                  const barPct     = maxTeamCars > 0 ? (stats.cars / maxTeamCars) * 100 : 0
+                  const color      = TEAM_COLORS[i % TEAM_COLORS.length]
+                  const isFirst    = i === 0 && stats.cars > 0
+                  const isExpanded = expandedTeam === team
+                  const addonEntries = Object.entries(stats.addonMap).sort((a, b) => b[1].count - a[1].count)
+                  const totalAddonRevenue = addonEntries.reduce((s, [, v]) => s + v.revenue, 0)
+
                   return (
-                    <div key={team}>
-                      <div className="mb-1.5 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {isFirst && <span className="text-base">🏆</span>}
-                          <span className={`text-sm font-bold ${isFirst ? '' : 'text-gray-700'}`} style={isFirst ? { color } : {}}>
-                            #{i + 1} {team}
-                          </span>
-                          {stats.addons > 0 && (
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                              +{stats.addons} add-on{stats.addons !== 1 ? 's' : ''}
+                    <div key={team} className="rounded-xl border border-gray-100 overflow-hidden">
+                      {/* Team row */}
+                      <div className="px-4 py-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {isFirst && <span className="text-base">🏆</span>}
+                            <span className="text-sm font-bold" style={{ color: isFirst ? color : '#374151' }}>
+                              #{i + 1} {team}
                             </span>
-                          )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                              <span><strong className="text-gray-900">{stats.cars}</strong> cars</span>
+                              <span><strong className="text-gray-900">{formatPHP(stats.revenue)}</strong></span>
+                            </div>
+                            {/* Add-on dropdown toggle */}
+                            {stats.addons > 0 && (
+                              <button
+                                onClick={() => setExpandedTeam(isExpanded ? null : team)}
+                                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                                style={{
+                                  backgroundColor: isExpanded ? 'rgba(184,146,42,0.15)' : 'rgba(184,146,42,0.08)',
+                                  color: '#B8922A',
+                                }}>
+                                +{stats.addons} add-on{stats.addons !== 1 ? 's' : ''}
+                                <span className="ml-0.5 text-[10px]">{isExpanded ? '▲' : '▼'}</span>
+                              </button>
+                            )}
+                            {stats.addons === 0 && (
+                              <span className="text-[11px] text-gray-400">No add-ons</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-gray-500">
-                          <span><strong className="text-gray-900">{stats.cars}</strong> cars</span>
-                          <span><strong className="text-gray-900">{formatPHP(stats.revenue)}</strong></span>
+                        {/* Progress bar */}
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${barPct}%`, backgroundColor: color }} />
                         </div>
                       </div>
-                      <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${barPct}%`, backgroundColor: color }} />
-                      </div>
+
+                      {/* Add-on breakdown dropdown */}
+                      {isExpanded && addonEntries.length > 0 && (
+                        <div className="border-t border-gray-100 px-4 py-3"
+                          style={{ backgroundColor: 'rgba(184,146,42,0.04)' }}>
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                              Add-on Upsells
+                            </p>
+                            <p className="text-xs font-semibold" style={{ color: '#B8922A' }}>
+                              {formatPHP(totalAddonRevenue)} add-on revenue
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            {addonEntries.map(([svc, { count, revenue }]) => (
+                              <div key={svc} className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: color }} />
+                                  <span className="text-gray-700 font-medium">{svc}</span>
+                                </div>
+                                <div className="flex items-center gap-3 text-gray-500">
+                                  <span className="font-semibold text-gray-900">×{count}</span>
+                                  <span>{formatPHP(revenue)}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs">
+                            <span className="text-gray-400">Total add-ons this period</span>
+                            <span className="font-bold" style={{ color: '#B8922A' }}>{stats.addons}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
 
                 {/* Unassigned */}
                 {unassignedCars > 0 && (
-                  <div className="border-t border-gray-100 pt-3">
+                  <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
                     <div className="flex items-center justify-between text-xs text-gray-400">
                       <span>No Team Assigned</span>
                       <span>{unassignedCars} car{unassignedCars !== 1 ? 's' : ''}</span>
@@ -376,10 +462,11 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Add-on explanation */}
+            {/* Footer note */}
             <div className="mt-4 rounded-xl bg-gray-50 px-3 py-2">
               <p className="text-[10px] text-gray-400">
-                <strong>Add-ons tracked:</strong> {ADDON_SERVICES.slice(0, 5).join(', ')} and more. Add-ons are used as tiebreaker when car counts are equal.
+                <strong>Add-ons</strong> = any service beyond Basic Wash or Body Wash (e.g. Wax, Bac-2-Zero, Engine Detailing).
+                Add-on count is used as tiebreaker when car counts are equal. Click the add-on badge to see the breakdown.
               </p>
             </div>
           </div>
@@ -407,7 +494,8 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div className="h-full rounded-full" style={{ width: `${(count / maxServiceCount) * 100}%`, backgroundColor: '#EDD98A' }} />
+                        <div className="h-full rounded-full"
+                          style={{ width: `${(count / maxServiceCount) * 100}%`, backgroundColor: '#EDD98A' }} />
                       </div>
                     </div>
                   ))}
