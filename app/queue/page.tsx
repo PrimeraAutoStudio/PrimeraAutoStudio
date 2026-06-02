@@ -59,50 +59,56 @@ const isOthers = (name: string) => name.trim().toLowerCase() === 'others'
 
 function mapServiceName(raw: string): string[] {
   const map: Record<string, string[]> = {
-    'Basic':                      ['Basic Wash'],
-    'Basic + Wax':                ['Basic Wash', 'Wax'],
-    'Body Wash + Wax':            ['Body Wash', 'Wax'],
-    'Basic + Bac to Zero':        ['Basic Wash', 'Bac-2-Zero'],
-    'Basic + Bac to Zero + Wax':  ['Basic Wash', 'Bac-2-Zero', 'Wax'],
-    'Body Wash':                  ['Body Wash'],
-    'Others':                     ['Others'],
-    'Wax Only':                   ['Wax'],
+    'Basic':                     ['Basic Wash'],
+    'Basic + Wax':               ['Basic Wash', 'Wax'],
+    'Body Wash + Wax':           ['Body Wash', 'Wax'],
+    'Basic + Bac to Zero':       ['Basic Wash', 'Bac-2-Zero'],
+    'Basic + Bac to Zero + Wax': ['Basic Wash', 'Bac-2-Zero', 'Wax'],
+    'Body Wash':                 ['Body Wash'],
+    'Others':                    ['Others'],
+    'Wax Only':                  ['Wax'],
   }
   const trimmed = raw.trim()
-  if (map[trimmed]) return map[trimmed]
-  return [trimmed]
+  return map[trimmed] ?? [trimmed]
 }
 
-function parseServiceNames(serviceNameStr: string): string[] {
-  if (!serviceNameStr) return []
-  return serviceNameStr.split(',').flatMap((s) => mapServiceName(s.trim())).filter(Boolean)
+function parseServiceNames(s: string): string[] {
+  if (!s) return []
+  return s.split(',').flatMap((x) => mapServiceName(x.trim())).filter(Boolean)
 }
 
-// Status badge colors
 function statusColor(status: string) {
   if (status === 'Deposited') return 'bg-green-100 text-green-700'
-  if (status === 'Pending') return 'bg-blue-100 text-blue-700'
-  return 'bg-amber-100 text-amber-700' // On Hand
+  if (status === 'Pending')   return 'bg-blue-100 text-blue-700'
+  return 'bg-amber-100 text-amber-700'
 }
 
 export default function QueuePage() {
-  const [range, setRange] = useState<DateRange>(rangeForPreset('today'))
-  const [rows, setRows] = useState<Transaction[]>([])
-  const [loading, setLoading] = useState(true)
+  const [range, setRange]         = useState<DateRange>(rangeForPreset('today'))
+  const [rows, setRows]           = useState<Transaction[]>([])
+  const [loading, setLoading]     = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    selectedServices: [], manualPrice: '', payment_method: '', status: '', notes: '', time_in: '', team: '',
+    selectedServices: [], manualPrice: '', payment_method: '',
+    status: '', notes: '', time_in: '', team: '',
   })
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState('')
-  const [exporting, setExporting] = useState(false)
+  const [saving, setSaving]           = useState(false)
+  const [saveError, setSaveError]     = useState('')
+  const [exporting, setExporting]     = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [teams, setTeams] = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
+  const [deleting, setDeleting]       = useState(false)
+  const [teams, setTeams]             = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
 
-  const [services, setServices] = useState<ServiceRow[]>([])
-  const [servicePrices, setServicePrices] = useState<ServicePriceRow[]>([])
-  const [sizes, setSizes] = useState<SizeRow[]>([])
+  // ── Pay Now modal state ──────────────────────────────────────────────────
+  const [payNowRow, setPayNowRow]           = useState<Transaction | null>(null)
+  const [payNowMethod, setPayNowMethod]     = useState('')
+  const [payNowStatus, setPayNowStatus]     = useState('On Hand')
+  const [payNowSaving, setPayNowSaving]     = useState(false)
+  const [payNowError, setPayNowError]       = useState('')
+
+  const [services, setServices]             = useState<ServiceRow[]>([])
+  const [servicePrices, setServicePrices]   = useState<ServicePriceRow[]>([])
+  const [sizes, setSizes]                   = useState<SizeRow[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
 
   useEffect(() => {
@@ -116,7 +122,10 @@ export default function QueuePage() {
       if (sv.data) setServices(sv.data)
       if (sp.data) setServicePrices(sp.data)
       if (pl.data) setSizes(pl.data)
-      if (pm.data) setPaymentMethods(pm.data)
+      if (pm.data) {
+        setPaymentMethods(pm.data)
+        if (pm.data.length > 0) setPayNowMethod(pm.data[0].name)
+      }
       if (st.data?.teams) setTeams(st.data.teams)
     })
   }, [])
@@ -126,18 +135,15 @@ export default function QueuePage() {
     const { data, error } = await supabase
       .from('transactions')
       .select('id, date, time_in, plate_number, make, model, size_category, service_name, price, payment_method, status, notes, team')
-      .gte('date', range.from)
-      .lte('date', range.to)
-      .order('date', { ascending: true })
-      .order('time_in', { ascending: true })
+      .gte('date', range.from).lte('date', range.to)
+      .order('date', { ascending: true }).order('time_in', { ascending: true })
     if (error) console.error('queue fetch:', error.message)
     else setRows((data ?? []).map((r) => ({ ...r, id: String(r.id) })))
     setLoading(false)
   }, [range])
 
   useEffect(() => {
-    setLoading(true)
-    fetchRows()
+    setLoading(true); fetchRows()
     if (range.preset === 'today') {
       const interval = setInterval(fetchRows, 30_000)
       return () => clearInterval(interval)
@@ -158,23 +164,18 @@ export default function QueuePage() {
     return base ? base.base_price : 0
   }
 
-  const editRow = rows.find((r) => r.id === editingId)
+  const editRow     = rows.find((r) => r.id === editingId)
   const sizeForEdit = editRow?.size_category ?? ''
-
-  const autoTotal = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
+  const autoTotal   = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
   const effectivePrice = editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
   function startEdit(row: Transaction) {
-    const seeded = parseServiceNames(row.service_name)
     setEditingId(row.id)
     setEditState({
-      selectedServices: seeded,
-      manualPrice: '',
-      payment_method: row.payment_method,
-      status: row.status,
-      notes: row.notes ?? '',
-      time_in: row.time_in ?? '',
-      team: row.team ?? '',
+      selectedServices: parseServiceNames(row.service_name),
+      manualPrice: '', payment_method: row.payment_method,
+      status: row.status, notes: row.notes ?? '',
+      time_in: row.time_in ?? '', team: row.team ?? '',
     })
     setSaveError('')
   }
@@ -204,13 +205,13 @@ export default function QueuePage() {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
     const { error } = await supabase.from('transactions').update({
-      service_name: serviceLabel,
-      price: effectivePrice,
+      service_name:   serviceLabel,
+      price:          effectivePrice,
       payment_method: editState.payment_method,
-      status: editState.status,
-      notes: editState.notes,
-      time_in: editState.time_in,
-      team: editState.team || null,
+      status:         editState.status,
+      notes:          editState.notes,
+      time_in:        editState.time_in,
+      team:           editState.team || null,
     }).eq('id', id)
     setSaving(false)
     if (error) { setSaveError(error.message); return }
@@ -222,15 +223,40 @@ export default function QueuePage() {
     setEditingId(null)
   }
 
+  // ── Pay Now ──────────────────────────────────────────────────────────────
+
+  function openPayNow(row: Transaction) {
+    setPayNowRow(row)
+    setPayNowMethod(paymentMethods[0]?.name ?? 'Cash')
+    setPayNowStatus('On Hand')
+    setPayNowError('')
+  }
+
+  async function confirmPayNow() {
+    if (!payNowRow || !payNowMethod) { setPayNowError('Please select a payment method.'); return }
+    setPayNowSaving(true); setPayNowError('')
+    const { error } = await supabase.from('transactions').update({
+      payment_method: payNowMethod,
+      status:         payNowStatus,
+    }).eq('id', payNowRow.id)
+    setPayNowSaving(false)
+    if (error) { setPayNowError(error.message); return }
+    setRows((prev) => prev.map((r) =>
+      r.id === payNowRow.id ? { ...r, payment_method: payNowMethod, status: payNowStatus } : r
+    ))
+    setPayNowRow(null)
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────────
+
   async function handleExport(format: ExportFormat) {
     setExporting(true)
-    const label = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
+    const label    = rangeLabel.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').toLowerCase()
     const filename = `primera-queue-${label}`
-    const HEADERS = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Team', 'Notes']
+    const HEADERS  = ['Date', 'Time In', 'Plate', 'Make', 'Model', 'Size', 'Service', 'Price', 'Payment', 'Status', 'Team', 'Notes']
     const dataRows = rows.map((r) => [
-      r.date ?? '', r.time_in ?? '', r.plate_number,
-      r.make ?? '', r.model ?? '', r.size_category,
-      r.service_name, r.price, r.payment_method, r.status, r.team ?? '', r.notes ?? '',
+      r.date ?? '', r.time_in ?? '', r.plate_number, r.make ?? '', r.model ?? '',
+      r.size_category, r.service_name, r.price, r.payment_method, r.status, r.team ?? '', r.notes ?? '',
     ])
     if (format === 'csv') {
       downloadCsv([HEADERS, ...dataRows], `${filename}.csv`)
@@ -240,26 +266,30 @@ export default function QueuePage() {
       await downloadPdf('Queue Report', rangeLabel, [{
         title: `Transactions — ${rangeLabel}`, head: HEADERS, rows: dataRows,
         summary: [
-          { label: 'Total Cars', value: String(totalCars) },
+          { label: 'Total Cars',    value: String(totalCars) },
           { label: 'Total Revenue', value: formatPrice(totalRevenue) },
-          { label: 'On Hand', value: formatPrice(onHandTotal) },
-          { label: 'Deposited', value: formatPrice(depositedTotal) },
-          { label: 'Pending', value: formatPrice(pendingTotal) },
+          { label: 'On Hand',       value: formatPrice(onHandTotal) },
+          { label: 'Deposited',     value: formatPrice(depositedTotal) },
+          { label: 'Pending',       value: formatPrice(pendingTotal) },
         ],
       }], `${filename}.pdf`)
     }
     setExporting(false)
   }
 
-  const rangeLabel = formatRangeLabel(range)
+  const rangeLabel  = formatRangeLabel(range)
   const isSingleDay = range.from === range.to
-  const carLabel = isSingleDay ? 'Cars' : 'Total Cars'
+  const carLabel    = isSingleDay ? 'Cars' : 'Total Cars'
 
-  const fullInputCls = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
+  const fullInputCls =
+    'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
+    'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
   return (
     <div className="px-6 py-6">
       <div className="mx-auto max-w-6xl">
+
+        {/* Header */}
         <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
           <h1 className="text-2xl font-bold text-gray-900">
             Queue — <span style={{ color: '#B8922A' }}>{rangeLabel}</span>
@@ -276,11 +306,12 @@ export default function QueuePage() {
           </div>
         </div>
 
+        {/* Date range */}
         <div className="mb-5 rounded-2xl bg-white p-4 shadow-sm">
           <DateRangeSelector value={range} onChange={(r) => { setRange(r); setEditingId(null) }} />
         </div>
 
-        {/* Summary cards — now includes Pending */}
+        {/* Summary cards */}
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
           <SummaryCard label={carLabel}      value={String(totalCars)} />
           <SummaryCard label="Total Revenue" value={formatPrice(totalRevenue)} highlight />
@@ -322,16 +353,14 @@ export default function QueuePage() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
                   <div className="flex flex-wrap gap-2">
                     {services.map((svc) => {
-                      const selected = editState.selectedServices.includes(svc.name)
+                      const selected  = editState.selectedServices.includes(svc.name)
                       const unitPrice = priceForService(svc.name, sizeForEdit)
                       return (
                         <button key={svc.name} type="button" onClick={() => toggleEditService(svc.name)}
                           className="flex flex-col items-start rounded-xl border px-3 py-2 text-left text-xs transition-all"
                           style={{ borderColor: selected ? '#B8922A' : '#e5e7eb', backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff', color: selected ? '#B8922A' : '#374151' }}>
                           <span className="font-semibold">{svc.name}</span>
-                          {!isOthers(svc.name) && unitPrice > 0 && (
-                            <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
-                          )}
+                          {!isOthers(svc.name) && unitPrice > 0 && <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>}
                           {isOthers(svc.name) && <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>}
                         </button>
                       )
@@ -358,8 +387,7 @@ export default function QueuePage() {
                       <label className="mb-1 block text-xs font-medium text-gray-500">Price Override — leave blank to use auto total</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
-                        <input type="number" min="0" step="0.01"
-                          value={editState.manualPrice}
+                        <input type="number" min="0" step="0.01" value={editState.manualPrice}
                           onChange={(e) => setEditState((s) => ({ ...s, manualPrice: e.target.value }))}
                           placeholder={String(autoTotal)}
                           className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-6 pr-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none" />
@@ -369,17 +397,14 @@ export default function QueuePage() {
                   </div>
                 )}
 
-                {/* Fields grid */}
+                {/* Fields */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {/* Time In override */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Time In</label>
-                    <input type="time"
-                      value={editState.time_in}
+                    <input type="time" value={editState.time_in}
                       onChange={(e) => setEditState((s) => ({ ...s, time_in: e.target.value }))}
                       className={fullInputCls} />
                   </div>
-                  {/* Payment Method */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Payment Method</label>
                     <select value={editState.payment_method}
@@ -389,7 +414,6 @@ export default function QueuePage() {
                       {paymentMethods.map((pm) => <option key={pm.name} value={pm.name}>{pm.name}</option>)}
                     </select>
                   </div>
-                  {/* Status */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
                     <select value={editState.status}
@@ -400,7 +424,6 @@ export default function QueuePage() {
                       <option value="Deposited">Deposited</option>
                     </select>
                   </div>
-                  {/* Team */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Team</label>
                     <select value={editState.team}
@@ -410,7 +433,6 @@ export default function QueuePage() {
                       {teams.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
-                  {/* Notes */}
                   <div className="sm:col-span-4">
                     <label className="mb-1 block text-xs font-medium text-gray-500">Notes</label>
                     <input type="text" value={editState.notes}
@@ -457,9 +479,10 @@ export default function QueuePage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {rows.map((row) => {
-                    const isEditing = editingId === row.id
+                    const isEditing  = editingId === row.id
+                    const isPending  = row.status === 'Pending'
                     return (
-                      <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : 'hover:bg-gray-50'}>
+                      <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : 'hover:bg-gray-50'}>
                         <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
                           {!isSingleDay && row.date
                             ? new Date(row.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
@@ -471,17 +494,30 @@ export default function QueuePage() {
                         <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.size_category}</td>
                         <td className="px-4 py-3 text-gray-700">{row.service_name}</td>
                         <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{formatPrice(row.price)}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.payment_method === 'Pending' ? <span className="text-blue-400 italic">Pending</span> : row.payment_method}</td>
-                        <td className="whitespace-nowrap px-4 py-3">
-                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusColor(row.status)}`}>{row.status}</span>
+                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">
+                          {row.payment_method === 'Pending'
+                            ? <span className="italic text-blue-400">Pending</span>
+                            : row.payment_method}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-gray-500 text-xs">{row.team || '—'}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusColor(row.status)}`}>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{row.team || '—'}</td>
                         <td className="px-4 py-3 text-gray-500">{row.notes || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           {isEditing ? (
                             <span className="text-xs font-semibold" style={{ color: '#B8922A' }}>Editing…</span>
                           ) : (
                             <div className="flex items-center gap-1.5">
+                              {/* Pay Now button — only for Pending rows */}
+                              {isPending && (
+                                <button onClick={() => openPayNow(row)}
+                                  className="rounded-lg bg-green-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-600 transition-colors">
+                                  💳 Pay
+                                </button>
+                              )}
                               <button onClick={() => startEdit(row)}
                                 className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
                                 style={{ borderColor: '#B8922A', color: '#B8922A' }}
@@ -510,7 +546,73 @@ export default function QueuePage() {
         )}
       </div>
 
-      {/* Delete confirmation modal */}
+      {/* ── Pay Now Modal ── */}
+      {payNowRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="mb-1 text-base font-bold text-gray-900">Mark as Paid</h3>
+            <p className="mb-4 text-sm text-gray-500">
+              {payNowRow.plate_number} · {payNowRow.service_name} · <strong style={{ color: '#B8922A' }}>{formatPrice(payNowRow.price)}</strong>
+            </p>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Payment Method</label>
+                <div className="flex flex-wrap gap-2">
+                  {paymentMethods.map((pm) => (
+                    <button key={pm.name} type="button"
+                      onClick={() => setPayNowMethod(pm.name)}
+                      className="rounded-xl border px-4 py-2 text-sm font-semibold transition-all"
+                      style={{
+                        borderColor:     payNowMethod === pm.name ? '#B8922A' : '#e5e7eb',
+                        backgroundColor: payNowMethod === pm.name ? 'rgba(184,146,42,0.08)' : '#fff',
+                        color:           payNowMethod === pm.name ? '#B8922A' : '#374151',
+                      }}>
+                      {pm.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Status</label>
+                <div className="flex gap-2">
+                  {['On Hand', 'Deposited'].map((s) => (
+                    <button key={s} type="button"
+                      onClick={() => setPayNowStatus(s)}
+                      className="flex-1 rounded-xl border py-2 text-sm font-semibold transition-all"
+                      style={{
+                        borderColor:     payNowStatus === s ? '#B8922A' : '#e5e7eb',
+                        backgroundColor: payNowStatus === s ? 'rgba(184,146,42,0.08)' : '#fff',
+                        color:           payNowStatus === s ? '#B8922A' : '#374151',
+                      }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {payNowError && <p className="mb-3 text-sm text-red-600">{payNowError}</p>}
+
+            <div className="flex gap-3">
+              <button onClick={confirmPayNow} disabled={payNowSaving || !payNowMethod}
+                className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                style={{ backgroundColor: '#B8922A' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
+                {payNowSaving ? 'Saving…' : `Confirm Payment — ${formatPrice(payNowRow.price)}`}
+              </button>
+              <button onClick={() => setPayNowRow(null)} disabled={payNowSaving}
+                className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
       {confirmDeleteId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">

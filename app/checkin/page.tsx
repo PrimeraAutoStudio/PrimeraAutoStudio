@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 interface SizeRow          { size_category: string; base_price: number }
@@ -31,6 +32,8 @@ function formatPHP(n: number) {
 }
 
 export default function CheckIn() {
+  const router = useRouter()
+
   const [sizes, setSizes]                   = useState<SizeRow[]>([])
   const [services, setServices]             = useState<ServiceRow[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
@@ -41,8 +44,12 @@ export default function CheckIn() {
   const [selectedServices, setSelectedServices] = useState<string[]>([])
   const [manualPrice, setManualPrice]           = useState<string>('')
   const [loading, setLoading]                   = useState(false)
-  const [success, setSuccess]                   = useState(false)
   const [error, setError]                       = useState('')
+
+  // ── Success modal state ──────────────────────────────────────────────────
+  const [showSuccess, setShowSuccess]         = useState(false)
+  const [lastCheckin, setLastCheckin]         = useState<{ plate: string; services: string; price: number } | null>(null)
+  const [isFreeWashSuccess, setIsFreeWashSuccess] = useState(false)
 
   // Plate autocomplete
   const [plateSuggestions, setPlateSuggestions] = useState<string[]>([])
@@ -52,8 +59,7 @@ export default function CheckIn() {
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (plateRef.current && !plateRef.current.contains(e.target as Node))
-        setShowSuggestions(false)
+      if (plateRef.current && !plateRef.current.contains(e.target as Node)) setShowSuggestions(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -79,9 +85,9 @@ export default function CheckIn() {
   }
 
   // Loyalty
-  const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
-  const [loyaltyPlate, setLoyaltyPlate]     = useState('')
-  const [loyaltyCard, setLoyaltyCard]       = useState<LoyaltyCard | null | 'not_found'>('not_found')
+  const [loyaltyEnabled, setLoyaltyEnabled]     = useState(false)
+  const [loyaltyPlate, setLoyaltyPlate]         = useState('')
+  const [loyaltyCard, setLoyaltyCard]           = useState<LoyaltyCard | null | 'not_found'>('not_found')
   const [loyaltyLookingUp, setLoyaltyLookingUp] = useState(false)
   const lookupTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -104,7 +110,7 @@ export default function CheckIn() {
     else { setLoyaltyCard('not_found'); setLoyaltyPlate('') }
   }
 
-  // Load dropdowns + teams
+  // Load dropdowns
   useEffect(() => {
     async function loadDropdowns() {
       const [{ data: pl }, { data: sv }, { data: pm }, { data: sp }, { data: st }] = await Promise.all([
@@ -145,10 +151,10 @@ export default function CheckIn() {
 
   const autoTotal      = selectedServices.reduce((sum, svc) => sum + priceForService(svc, form.size_category), 0)
   const effectivePrice = isFreeWash ? 0 : (manualPrice !== '' ? parseFloat(manualPrice) || 0 : autoTotal)
+  const isPendingPayment = form.payment_method === '' || form.payment_method === 'Pending'
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
-    const { name, value } = e.target
-    setForm((prev) => ({ ...prev, [name]: value }))
+    const { name, value } = e.target; setForm((prev) => ({ ...prev, [name]: value }))
   }
 
   function handleSizeChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -160,74 +166,63 @@ export default function CheckIn() {
     setManualPrice('')
   }
 
-  // Determine effective payment method and status for saving
-  // If payment is pending, status should also be Pending
-  const isPendingPayment = form.payment_method === '' || form.payment_method === 'Pending'
+  function resetForm() {
+    setForm(EMPTY_FORM); setSelectedServices([]); setManualPrice('')
+    setLoyaltyEnabled(false); setLoyaltyCard('not_found'); setLoyaltyPlate('')
+    setError('')
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setError('')
 
     const { plate_number, size_category } = form
     if (!plate_number || !size_category || selectedServices.length === 0) {
-      setError('Please fill in plate, size, and at least one service.')
-      return
+      setError('Please fill in plate, size, and at least one service.'); return
     }
 
     const now          = new Date()
     const localDate    = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     const localTime    = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
     const serviceLabel = selectedServices.join(', ')
-
-    // Payment method: use selected or 'Pending'
     const paymentMethod = form.payment_method || 'Pending'
-    // Status: if payment is pending, status is Pending. Otherwise use selected status
     const status = isPendingPayment ? 'Pending' : form.status
 
     setLoading(true)
 
     const { data: txData, error: txErr } = await supabase.from('transactions').insert({
-      plate_number: plate_number.toUpperCase(),
-      make:          form.make,
-      model:         form.model,
-      size_category,
-      service_name:  serviceLabel,
-      price:         effectivePrice,
-      payment_method: paymentMethod,
-      notes:         form.notes,
-      status,
-      date:          localDate,
-      time_in:       localTime,
-      team:          form.team || null,
+      plate_number: plate_number.toUpperCase(), make: form.make, model: form.model,
+      size_category, service_name: serviceLabel, price: effectivePrice,
+      payment_method: paymentMethod, notes: form.notes, status,
+      date: localDate, time_in: localTime, team: form.team || null,
     }).select('id').single()
 
     if (txErr) { setError(txErr.message); setLoading(false); return }
 
-    // Insert transaction_services rows
     const serviceRows = selectedServices.map((svc) => ({
       transaction_id: txData.id, service_name: svc, price: priceForService(svc, size_category),
     }))
-    const { error: svcErr } = await supabase.from('transaction_services').insert(serviceRows)
-    if (svcErr) console.error('transaction_services:', svcErr.message)
+    await supabase.from('transaction_services').insert(serviceRows)
 
-    // Loyalty card update
     if (loyaltyEnabled) {
       const loyaltyPlateUp = loyaltyPlate.trim().toUpperCase() || plate_number.toUpperCase()
-      const isRedemption   = isFreeWash
       if (cardFound) {
         const card = loyaltyCard as LoyaltyCard
         await supabase.from('loyalty_cards').update({
-          wash_count: isRedemption ? 0 : card.wash_count + 1,
-          ...(isRedemption ? { last_redeemed: localDate } : {}),
+          wash_count: isFreeWash ? 0 : card.wash_count + 1,
+          ...(isFreeWash ? { last_redeemed: localDate } : {}),
         }).eq('id', card.id)
       } else {
         await supabase.from('loyalty_cards').insert({ plate_number: loyaltyPlateUp, wash_count: 1 })
       }
     }
 
-    setLoading(false); setSuccess(true)
-    setForm(EMPTY_FORM); setSelectedServices([]); setManualPrice('')
-    setLoyaltyEnabled(false); setLoyaltyCard('not_found'); setLoyaltyPlate('')
-    setTimeout(() => setSuccess(false), 4000)
+    setLoading(false)
+
+    // Show success modal instead of inline message
+    setLastCheckin({ plate: plate_number.toUpperCase(), services: serviceLabel, price: effectivePrice })
+    setIsFreeWashSuccess(isFreeWash)
+    setShowSuccess(true)
+    resetForm()
   }
 
   const inputCls =
@@ -290,7 +285,7 @@ export default function CheckIn() {
             </select>
           </div>
 
-          {/* Multi-select Services */}
+          {/* Services */}
           <div>
             <label className={labelCls}>Services <span className="text-red-500">*</span></label>
             {services.length === 0 ? <p className="text-sm text-gray-400">Loading services…</p> : (
@@ -428,7 +423,7 @@ export default function CheckIn() {
             </div>
           )}
 
-          {/* Payment Method — optional, can be pending */}
+          {/* Payment Method */}
           <div>
             <label className={labelCls}>Payment Method</label>
             <select name="payment_method" value={form.payment_method} onChange={handleChange} className={inputCls}>
@@ -440,7 +435,7 @@ export default function CheckIn() {
             )}
           </div>
 
-          {/* Status — shown only if payment is selected */}
+          {/* Status — only if payment selected */}
           {!isPendingPayment && (
             <div>
               <label className={labelCls}>Status</label>
@@ -459,13 +454,7 @@ export default function CheckIn() {
               placeholder="Optional notes…" rows={3} className={`${inputCls} resize-none`} />
           </div>
 
-          {/* Feedback */}
-          {error   && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
-          {success && (
-            <p className="rounded-lg bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-              Check-in saved!{isFreeWash ? ' Loyalty card redeemed.' : ''}{isPendingPayment ? ' Marked as Pending — update payment in Queue.' : ''}
-            </p>
-          )}
+          {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
           {/* Submit */}
           <button type="submit" disabled={loading}
@@ -481,6 +470,43 @@ export default function CheckIn() {
 
         </form>
       </div>
+
+      {/* ── Success Modal ── */}
+      {showSuccess && lastCheckin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl text-center">
+            {/* Icon */}
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+              <span className="text-3xl">{isFreeWashSuccess ? '🎉' : '✓'}</span>
+            </div>
+
+            <h3 className="mb-1 text-lg font-bold text-gray-900">
+              {isFreeWashSuccess ? 'Free Wash Redeemed!' : 'Added to Queue!'}
+            </h3>
+            <p className="mb-1 text-sm font-semibold" style={{ color: '#B8922A' }}>{lastCheckin.plate}</p>
+            <p className="mb-1 text-sm text-gray-600">{lastCheckin.services}</p>
+            <p className="mb-5 text-sm font-bold text-gray-900">
+              {isFreeWashSuccess ? 'FREE' : formatPHP(lastCheckin.price)}
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowSuccess(false); router.push('/queue') }}
+                className="flex-1 rounded-xl py-3 text-sm font-semibold text-white"
+                style={{ backgroundColor: '#B8922A' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
+                View Queue
+              </button>
+              <button
+                onClick={() => setShowSuccess(false)}
+                className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                New Check-In
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
