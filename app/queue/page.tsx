@@ -35,6 +35,7 @@ interface SizeRow          { size_category: string; base_price: number }
 interface PaymentMethodRow { name: string }
 
 interface EditState {
+  size_category: string
   selectedServices: string[]
   manualPrice: string
   payment_method: string
@@ -43,6 +44,9 @@ interface EditState {
   time_in: string
   team: string
 }
+
+const MOTO_SIZES = ['Motorcycle', 'Big Bike', 'Tricycle']
+const MOTO_ALLOWED_SERVICES = ['Basic', 'Wax', 'Others']
 
 function formatTime(t: string | null) {
   if (!t) return '—'
@@ -89,22 +93,22 @@ export default function QueuePage() {
   const [loading, setLoading]     = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    selectedServices: [], manualPrice: '', payment_method: '',
+    size_category: '', selectedServices: [], manualPrice: '', payment_method: '',
     status: '', notes: '', time_in: '', team: '',
   })
-  const [saving, setSaving]           = useState(false)
-  const [saveError, setSaveError]     = useState('')
-  const [exporting, setExporting]     = useState(false)
+  const [saving, setSaving]               = useState(false)
+  const [saveError, setSaveError]         = useState('')
+  const [exporting, setExporting]         = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [deleting, setDeleting]       = useState(false)
-  const [teams, setTeams]             = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
+  const [deleting, setDeleting]           = useState(false)
+  const [teams, setTeams]                 = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
 
-  // ── Pay Now modal state ──────────────────────────────────────────────────
-  const [payNowRow, setPayNowRow]           = useState<Transaction | null>(null)
-  const [payNowMethod, setPayNowMethod]     = useState('')
-  const [payNowStatus, setPayNowStatus]     = useState('On Hand')
-  const [payNowSaving, setPayNowSaving]     = useState(false)
-  const [payNowError, setPayNowError]       = useState('')
+  // ── Pay Now modal ────────────────────────────────────────────────────────
+  const [payNowRow, setPayNowRow]       = useState<Transaction | null>(null)
+  const [payNowMethod, setPayNowMethod] = useState('')
+  const [payNowStatus, setPayNowStatus] = useState('On Hand')
+  const [payNowSaving, setPayNowSaving] = useState(false)
+  const [payNowError, setPayNowError]   = useState('')
 
   const [services, setServices]             = useState<ServiceRow[]>([])
   const [servicePrices, setServicePrices]   = useState<ServicePriceRow[]>([])
@@ -164,23 +168,42 @@ export default function QueuePage() {
     return base ? base.base_price : 0
   }
 
-  const editRow     = rows.find((r) => r.id === editingId)
-  const sizeForEdit = editRow?.size_category ?? ''
-  const autoTotal   = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
+  const editRow       = rows.find((r) => r.id === editingId)
+  const sizeForEdit   = editState.size_category
+  const isMotoEdit    = MOTO_SIZES.includes(sizeForEdit)
+  const visibleEditServices = isMotoEdit
+    ? services.filter((s) => MOTO_ALLOWED_SERVICES.includes(s.name))
+    : services
+  const autoTotal     = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
   const effectivePrice = editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
   function startEdit(row: Transaction) {
     setEditingId(row.id)
     setEditState({
+      size_category:    row.size_category,
       selectedServices: parseServiceNames(row.service_name),
-      manualPrice: '', payment_method: row.payment_method,
-      status: row.status, notes: row.notes ?? '',
-      time_in: row.time_in ?? '', team: row.team ?? '',
+      manualPrice:      '',
+      payment_method:   row.payment_method,
+      status:           row.status,
+      notes:            row.notes ?? '',
+      time_in:          row.time_in ?? '',
+      team:             row.team ?? '',
     })
     setSaveError('')
   }
 
   function cancelEdit() { setEditingId(null); setSaveError('') }
+
+  // When size changes in edit, clear services that may not be valid
+  function handleEditSizeChange(newSize: string) {
+    const newIsMoto = MOTO_SIZES.includes(newSize)
+    setEditState((prev) => {
+      const filtered = newIsMoto
+        ? prev.selectedServices.filter((s) => MOTO_ALLOWED_SERVICES.includes(s))
+        : prev.selectedServices
+      return { ...prev, size_category: newSize, selectedServices: filtered, manualPrice: '' }
+    })
+  }
 
   async function deleteRow(id: string) {
     setDeleting(true)
@@ -205,6 +228,7 @@ export default function QueuePage() {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
     const { error } = await supabase.from('transactions').update({
+      size_category:  editState.size_category,
       service_name:   serviceLabel,
       price:          effectivePrice,
       payment_method: editState.payment_method,
@@ -216,9 +240,16 @@ export default function QueuePage() {
     setSaving(false)
     if (error) { setSaveError(error.message); return }
     setRows((prev) => prev.map((r) =>
-      r.id === id ? { ...r, service_name: serviceLabel, price: effectivePrice,
-        payment_method: editState.payment_method, status: editState.status,
-        notes: editState.notes, time_in: editState.time_in, team: editState.team || null } : r
+      r.id === id ? { ...r,
+        size_category:  editState.size_category,
+        service_name:   serviceLabel,
+        price:          effectivePrice,
+        payment_method: editState.payment_method,
+        status:         editState.status,
+        notes:          editState.notes,
+        time_in:        editState.time_in,
+        team:           editState.team || null,
+      } : r
     ))
     setEditingId(null)
   }
@@ -343,25 +374,57 @@ export default function QueuePage() {
                   <p className="text-sm font-bold text-amber-800">
                     Editing — {editRow.plate_number}
                     {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
-                    {' '}· {editRow.size_category}
                   </p>
                   <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
+                </div>
+
+                {/* Size Category */}
+                <div className="mb-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Size Category</p>
+                  <div className="flex flex-wrap gap-2">
+                    {sizes.map((s) => (
+                      <button key={s.size_category} type="button"
+                        onClick={() => handleEditSizeChange(s.size_category)}
+                        className="rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all"
+                        style={{
+                          borderColor:     editState.size_category === s.size_category ? '#B8922A' : '#e5e7eb',
+                          backgroundColor: editState.size_category === s.size_category ? 'rgba(184,146,42,0.08)' : '#fff',
+                          color:           editState.size_category === s.size_category ? '#B8922A' : '#374151',
+                        }}>
+                        {s.size_category}
+                      </button>
+                    ))}
+                  </div>
+                  {isMotoEdit && (
+                    <p className="mt-2 rounded-lg px-3 py-1.5 text-xs font-medium"
+                      style={{ backgroundColor: 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
+                      {editState.size_category} — Available services: Basic Wash, Wax, Others
+                    </p>
+                  )}
                 </div>
 
                 {/* Services */}
                 <div className="mb-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
                   <div className="flex flex-wrap gap-2">
-                    {services.map((svc) => {
+                    {visibleEditServices.map((svc) => {
                       const selected  = editState.selectedServices.includes(svc.name)
                       const unitPrice = priceForService(svc.name, sizeForEdit)
                       return (
                         <button key={svc.name} type="button" onClick={() => toggleEditService(svc.name)}
                           className="flex flex-col items-start rounded-xl border px-3 py-2 text-left text-xs transition-all"
-                          style={{ borderColor: selected ? '#B8922A' : '#e5e7eb', backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff', color: selected ? '#B8922A' : '#374151' }}>
+                          style={{
+                            borderColor:     selected ? '#B8922A' : '#e5e7eb',
+                            backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
+                            color:           selected ? '#B8922A' : '#374151',
+                          }}>
                           <span className="font-semibold">{svc.name}</span>
-                          {!isOthers(svc.name) && unitPrice > 0 && <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>}
-                          {isOthers(svc.name) && <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>}
+                          {!isOthers(svc.name) && unitPrice > 0 && (
+                            <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
+                          )}
+                          {isOthers(svc.name) && (
+                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
+                          )}
                         </button>
                       )
                     })}
@@ -375,7 +438,9 @@ export default function QueuePage() {
                       {editState.selectedServices.map((svc) => (
                         <div key={svc} className="flex justify-between text-xs text-gray-600">
                           <span>{svc}</span>
-                          {isOthers(svc) ? <span className="italic text-gray-400">manual</span> : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
+                          {isOthers(svc)
+                            ? <span className="italic text-gray-400">manual</span>
+                            : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
                         </div>
                       ))}
                     </div>
@@ -397,7 +462,7 @@ export default function QueuePage() {
                   </div>
                 )}
 
-                {/* Fields */}
+                {/* Other fields */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-500">Time In</label>
@@ -443,7 +508,7 @@ export default function QueuePage() {
 
                 {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
                 <div className="mt-4 flex gap-2">
-                  <button onClick={() => saveEdit(editingId)} disabled={saving || editState.selectedServices.length === 0}
+                  <button onClick={() => saveEdit(editingId)} disabled={saving || editState.selectedServices.length === 0 || !editState.size_category}
                     className="rounded-xl px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
                     style={{ backgroundColor: '#B8922A' }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
@@ -479,8 +544,8 @@ export default function QueuePage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {rows.map((row) => {
-                    const isEditing  = editingId === row.id
-                    const isPending  = row.status === 'Pending'
+                    const isEditing = editingId === row.id
+                    const isPending = row.status === 'Pending'
                     return (
                       <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : 'hover:bg-gray-50'}>
                         <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
@@ -511,7 +576,6 @@ export default function QueuePage() {
                             <span className="text-xs font-semibold" style={{ color: '#B8922A' }}>Editing…</span>
                           ) : (
                             <div className="flex items-center gap-1.5">
-                              {/* Pay Now button — only for Pending rows */}
                               {isPending && (
                                 <button onClick={() => openPayNow(row)}
                                   className="rounded-lg bg-green-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-600 transition-colors">
@@ -554,14 +618,12 @@ export default function QueuePage() {
             <p className="mb-4 text-sm text-gray-500">
               {payNowRow.plate_number} · {payNowRow.service_name} · <strong style={{ color: '#B8922A' }}>{formatPrice(payNowRow.price)}</strong>
             </p>
-
             <div className="space-y-3 mb-5">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Payment Method</label>
                 <div className="flex flex-wrap gap-2">
                   {paymentMethods.map((pm) => (
-                    <button key={pm.name} type="button"
-                      onClick={() => setPayNowMethod(pm.name)}
+                    <button key={pm.name} type="button" onClick={() => setPayNowMethod(pm.name)}
                       className="rounded-xl border px-4 py-2 text-sm font-semibold transition-all"
                       style={{
                         borderColor:     payNowMethod === pm.name ? '#B8922A' : '#e5e7eb',
@@ -573,13 +635,11 @@ export default function QueuePage() {
                   ))}
                 </div>
               </div>
-
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Status</label>
                 <div className="flex gap-2">
                   {['On Hand', 'Deposited'].map((s) => (
-                    <button key={s} type="button"
-                      onClick={() => setPayNowStatus(s)}
+                    <button key={s} type="button" onClick={() => setPayNowStatus(s)}
                       className="flex-1 rounded-xl border py-2 text-sm font-semibold transition-all"
                       style={{
                         borderColor:     payNowStatus === s ? '#B8922A' : '#e5e7eb',
@@ -592,9 +652,7 @@ export default function QueuePage() {
                 </div>
               </div>
             </div>
-
             {payNowError && <p className="mb-3 text-sm text-red-600">{payNowError}</p>}
-
             <div className="flex gap-3">
               <button onClick={confirmPayNow} disabled={payNowSaving || !payNowMethod}
                 className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-60"
