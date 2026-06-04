@@ -108,7 +108,6 @@ const BOTTOM_NAV = [
 
 const ALL_NAV = [...MAIN_NAV, ...BOTTOM_NAV]
 
-// Bottom tab bar — 5 most used pages
 const BOTTOM_TABS = [
   { href: '/dashboard', label: 'Home',     Icon: IconDashboard },
   { href: '/checkin',   label: 'Check In', Icon: IconCheckIn   },
@@ -119,9 +118,7 @@ const BOTTOM_TABS = [
 
 // ─── Desktop NavLink ──────────────────────────────────────────────────────────
 
-function NavLink({
-  href, label, Icon, collapsed,
-}: {
+function NavLink({ href, label, Icon, collapsed }: {
   href: string; label: string; Icon: () => React.ReactElement; collapsed: boolean
 }) {
   const pathname = usePathname()
@@ -168,7 +165,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       className="fixed left-0 top-0 z-40 flex h-screen flex-col transition-all duration-200"
       style={{ backgroundColor: '#0a0a0a', width: `${w}px` }}
     >
-      {/* Logo */}
       <div className={`flex flex-col items-center pb-6 pt-8 transition-all duration-200 ${collapsed ? 'px-2' : 'px-6'}`}>
         {collapsed ? (
           <div className="flex h-10 w-10 items-center justify-center rounded-full" style={{ backgroundColor: 'rgba(184,146,42,0.15)' }}>
@@ -193,7 +189,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </nav>
 
       <div className="flex-1" />
-
       <div className="mx-3 mb-2 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
       <nav className="flex flex-col gap-1 px-2 pb-2">
@@ -202,7 +197,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         ))}
       </nav>
 
-      {/* Collapse toggle */}
       <button
         onClick={onToggle}
         className="mx-2 mb-4 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors"
@@ -212,7 +206,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         title={collapsed ? 'Expand' : 'Collapse'}
       >
         {collapsed ? (
-          // Right arrow = expand
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
             <path d="M9 18l6-6-6-6" />
           </svg>
@@ -239,23 +232,18 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 
 function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname()
-
-  // Auto-close on navigation
   useEffect(() => { onClose() }, [pathname])
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className={`fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 sm:hidden ${open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
       />
-      {/* Slide-in drawer */}
       <div
         className={`fixed left-0 top-0 z-50 flex h-full w-72 flex-col transition-transform duration-200 sm:hidden ${open ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ backgroundColor: '#0a0a0a' }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-5 pb-4 pt-6">
           <div>
             <Image src="/Full_White Grad_No BG.svg" alt="Primera Auto Studio" width={110} height={48} priority className="h-auto w-[110px]" />
@@ -272,18 +260,18 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
 
         <div className="mx-4 mb-3 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
-        {/* All nav links */}
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
           {ALL_NAV.map(({ href, label, Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/')
             return (
               <Link key={href} href={href}
-                className="flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-medium transition-colors"
+                className="flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-semibold transition-colors"
                 style={{
-                  color: active ? '#B8922A' : '#888',
+                  color: active ? '#B8922A' : '#aaa',
                   backgroundColor: active ? 'rgba(184,146,42,0.1)' : 'transparent',
                 }}>
-                <Icon />
+                {/* Gold icon always in drawer */}
+                <span style={{ color: active ? '#B8922A' : '#B8922A' }}><Icon /></span>
                 <span>{label}</span>
                 {active && <span className="ml-auto h-1.5 w-1.5 rounded-full" style={{ backgroundColor: '#B8922A' }} />}
               </Link>
@@ -299,7 +287,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
   )
 }
 
-// ─── Mobile Top Bar ───────────────────────────────────────────────────────────
+// ─── Mobile Top Bar — Obsidian ────────────────────────────────────────────────
 
 function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
   const pathname = usePathname()
@@ -307,38 +295,63 @@ function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
   const today = new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-gray-100 bg-white/95 px-4 backdrop-blur-sm sm:hidden">
+    <header
+      className="sticky top-0 z-30 flex h-14 items-center justify-between px-4 sm:hidden"
+      style={{ backgroundColor: '#0a0a0a', borderBottom: '1px solid #1f1f1f' }}
+    >
+      {/* Hamburger — gold tint */}
       <button onClick={onMenuOpen}
-        className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-gray-600 active:scale-95">
+        className="flex h-9 w-9 items-center justify-center rounded-xl active:scale-95"
+        style={{ backgroundColor: 'rgba(184,146,42,0.12)', color: '#B8922A' }}>
         <IconMenu />
       </button>
+
+      {/* Page title — bold, gold accent bar */}
       <div className="flex items-center gap-2">
         <div className="h-5 w-0.5 rounded-full" style={{ backgroundColor: '#B8922A' }} />
-        <span className="text-sm font-bold text-gray-900">{currentPage?.label ?? 'Primera'}</span>
+        <span className="text-base font-extrabold tracking-tight" style={{ color: '#fff' }}>
+          {currentPage?.label ?? 'Primera'}
+        </span>
       </div>
-      <span className="text-xs font-medium text-gray-400">{today}</span>
+
+      {/* Date — muted gold */}
+      <span className="text-xs font-medium" style={{ color: '#EDD98A' }}>{today}</span>
     </header>
   )
 }
 
-// ─── Mobile Bottom Tab Bar ────────────────────────────────────────────────────
+// ─── Mobile Bottom Tab Bar — Obsidian ────────────────────────────────────────
 
 function BottomTabBar() {
   const pathname = usePathname()
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-gray-100 bg-white sm:hidden"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className="fixed bottom-0 left-0 right-0 z-40 flex sm:hidden"
+      style={{
+        backgroundColor: '#0a0a0a',
+        borderTop: '1px solid #1f1f1f',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
     >
       {BOTTOM_TABS.map(({ href, label, Icon }) => {
         const active = pathname === href || pathname.startsWith(href + '/')
         return (
           <Link key={href} href={href}
             className="flex flex-1 flex-col items-center justify-center py-2.5 transition-colors"
-            style={{ color: active ? '#B8922A' : '#9ca3af' }}>
-            <Icon />
-            <span className="mt-0.5 text-[10px] font-semibold leading-none">{label}</span>
-            {active && <span className="mt-1 h-1 w-4 rounded-full" style={{ backgroundColor: '#B8922A' }} />}
+            style={{ color: active ? '#B8922A' : '#555' }}>
+            {/* Icons always gold tint, brighter when active */}
+            <span style={{ color: active ? '#B8922A' : '#B8922A', opacity: active ? 1 : 0.45 }}>
+              <Icon />
+            </span>
+            <span
+              className="mt-0.5 text-[10px] font-bold leading-none"
+              style={{ color: active ? '#B8922A' : '#666' }}>
+              {label}
+            </span>
+            {/* Active indicator — gold dot */}
+            {active && (
+              <span className="mt-1 h-1 w-4 rounded-full" style={{ backgroundColor: '#B8922A' }} />
+            )}
           </Link>
         )
       })}
@@ -368,36 +381,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden sm:block">
         <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
       </div>
 
-      {/* Mobile drawer */}
       <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      {/* Main content */}
-      <div
-        className="flex min-h-screen flex-col bg-gray-50 transition-all duration-200"
-        // On desktop: push right of sidebar. On mobile: no margin.
-        style={{ marginLeft: 0 }}
-      >
-        {/* Desktop margin spacer */}
+      <div className="flex min-h-screen flex-col bg-gray-50 transition-all duration-200">
         <style>{`@media (min-width: 640px) { .content-area { margin-left: ${sidebarW}px; } }`}</style>
         <div className="content-area flex min-h-screen flex-col">
-
-          {/* Mobile top bar */}
           <MobileTopBar onMenuOpen={() => setDrawerOpen(true)} />
-
-          {/* Desktop top bar */}
           <DesktopTopBar />
-
-          {/* Page content — extra bottom padding on mobile for tab bar */}
           <main className="flex-1 pb-20 sm:pb-0">
             {children}
           </main>
-
-          {/* Mobile bottom tab bar */}
           <BottomTabBar />
         </div>
       </div>
