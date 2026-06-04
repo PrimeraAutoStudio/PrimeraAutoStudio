@@ -45,7 +45,7 @@ interface EditState {
   team: string
 }
 
-const MOTO_SIZES = ['Motorcycle', 'Big Bike', 'Tricycle']
+const MOTO_SIZES           = ['Motorcycle', 'Big Bike', 'Tricycle']
 const MOTO_ALLOWED_SERVICES = ['Basic', 'Wax', 'Others']
 
 function formatTime(t: string | null) {
@@ -103,7 +103,6 @@ export default function QueuePage() {
   const [deleting, setDeleting]           = useState(false)
   const [teams, setTeams]                 = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
 
-  // ── Pay Now modal ────────────────────────────────────────────────────────
   const [payNowRow, setPayNowRow]       = useState<Transaction | null>(null)
   const [payNowMethod, setPayNowMethod] = useState('')
   const [payNowStatus, setPayNowStatus] = useState('On Hand')
@@ -168,13 +167,13 @@ export default function QueuePage() {
     return base ? base.base_price : 0
   }
 
-  const editRow       = rows.find((r) => r.id === editingId)
-  const sizeForEdit   = editState.size_category
-  const isMotoEdit    = MOTO_SIZES.includes(sizeForEdit)
+  const editRow        = rows.find((r) => r.id === editingId)
+  const sizeForEdit    = editState.size_category
+  const isMotoEdit     = MOTO_SIZES.includes(sizeForEdit)
   const visibleEditServices = isMotoEdit
     ? services.filter((s) => MOTO_ALLOWED_SERVICES.includes(s.name))
     : services
-  const autoTotal     = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
+  const autoTotal      = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
   const effectivePrice = editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
   function startEdit(row: Transaction) {
@@ -182,19 +181,15 @@ export default function QueuePage() {
     setEditState({
       size_category:    row.size_category,
       selectedServices: parseServiceNames(row.service_name),
-      manualPrice:      '',
-      payment_method:   row.payment_method,
-      status:           row.status,
-      notes:            row.notes ?? '',
-      time_in:          row.time_in ?? '',
-      team:             row.team ?? '',
+      manualPrice: '', payment_method: row.payment_method,
+      status: row.status, notes: row.notes ?? '',
+      time_in: row.time_in ?? '', team: row.team ?? '',
     })
     setSaveError('')
   }
 
   function cancelEdit() { setEditingId(null); setSaveError('') }
 
-  // When size changes in edit, clear services that may not be valid
   function handleEditSizeChange(newSize: string) {
     const newIsMoto = MOTO_SIZES.includes(newSize)
     setEditState((prev) => {
@@ -228,33 +223,20 @@ export default function QueuePage() {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
     const { error } = await supabase.from('transactions').update({
-      size_category:  editState.size_category,
-      service_name:   serviceLabel,
-      price:          effectivePrice,
-      payment_method: editState.payment_method,
-      status:         editState.status,
-      notes:          editState.notes,
-      time_in:        editState.time_in,
-      team:           editState.team || null,
+      size_category: editState.size_category, service_name: serviceLabel,
+      price: effectivePrice, payment_method: editState.payment_method,
+      status: editState.status, notes: editState.notes,
+      time_in: editState.time_in, team: editState.team || null,
     }).eq('id', id)
     setSaving(false)
     if (error) { setSaveError(error.message); return }
     setRows((prev) => prev.map((r) =>
-      r.id === id ? { ...r,
-        size_category:  editState.size_category,
-        service_name:   serviceLabel,
-        price:          effectivePrice,
-        payment_method: editState.payment_method,
-        status:         editState.status,
-        notes:          editState.notes,
-        time_in:        editState.time_in,
-        team:           editState.team || null,
-      } : r
+      r.id === id ? { ...r, size_category: editState.size_category, service_name: serviceLabel,
+        price: effectivePrice, payment_method: editState.payment_method, status: editState.status,
+        notes: editState.notes, time_in: editState.time_in, team: editState.team || null } : r
     ))
     setEditingId(null)
   }
-
-  // ── Pay Now ──────────────────────────────────────────────────────────────
 
   function openPayNow(row: Transaction) {
     setPayNowRow(row)
@@ -267,8 +249,7 @@ export default function QueuePage() {
     if (!payNowRow || !payNowMethod) { setPayNowError('Please select a payment method.'); return }
     setPayNowSaving(true); setPayNowError('')
     const { error } = await supabase.from('transactions').update({
-      payment_method: payNowMethod,
-      status:         payNowStatus,
+      payment_method: payNowMethod, status: payNowStatus,
     }).eq('id', payNowRow.id)
     setPayNowSaving(false)
     if (error) { setPayNowError(error.message); return }
@@ -277,8 +258,6 @@ export default function QueuePage() {
     ))
     setPayNowRow(null)
   }
-
-  // ── Export ────────────────────────────────────────────────────────────────
 
   async function handleExport(format: ExportFormat) {
     setExporting(true)
@@ -313,39 +292,194 @@ export default function QueuePage() {
   const carLabel    = isSingleDay ? 'Cars' : 'Total Cars'
 
   const fullInputCls =
-    'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
+    'w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 ' +
     'focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
 
+  // ── Edit Panel (shared mobile + desktop) ─────────────────────────────────
+  const EditPanel = editingId !== null && editRow ? (
+    <div className="border-b border-amber-200 bg-amber-50 px-4 py-4 sm:px-6 sm:py-5">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-bold text-amber-800">
+          Editing — {editRow.plate_number}
+          {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
+        </p>
+        <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
+      </div>
+
+      {/* Size */}
+      <div className="mb-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Size Category</p>
+        <div className="flex flex-wrap gap-2">
+          {sizes.map((s) => (
+            <button key={s.size_category} type="button" onClick={() => handleEditSizeChange(s.size_category)}
+              className="rounded-xl border px-3 py-2 text-xs font-semibold transition-all active:scale-95"
+              style={{
+                borderColor:     editState.size_category === s.size_category ? '#B8922A' : '#e5e7eb',
+                backgroundColor: editState.size_category === s.size_category ? 'rgba(184,146,42,0.08)' : '#fff',
+                color:           editState.size_category === s.size_category ? '#B8922A' : '#374151',
+              }}>
+              {s.size_category}
+            </button>
+          ))}
+        </div>
+        {isMotoEdit && (
+          <p className="mt-2 rounded-lg px-3 py-1.5 text-xs font-medium"
+            style={{ backgroundColor: 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
+            {editState.size_category} — Available: Basic Wash, Wax, Others
+          </p>
+        )}
+      </div>
+
+      {/* Services */}
+      <div className="mb-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {visibleEditServices.map((svc) => {
+            const selected  = editState.selectedServices.includes(svc.name)
+            const unitPrice = priceForService(svc.name, sizeForEdit)
+            return (
+              <button key={svc.name} type="button" onClick={() => toggleEditService(svc.name)}
+                className="flex flex-col items-start rounded-xl border px-3 py-2.5 text-left text-xs transition-all active:scale-95"
+                style={{
+                  borderColor:     selected ? '#B8922A' : '#e5e7eb',
+                  backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
+                  color:           selected ? '#B8922A' : '#374151',
+                }}>
+                <span className="font-semibold">{svc.name}</span>
+                {!isOthers(svc.name) && unitPrice > 0 && (
+                  <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
+                )}
+                {isOthers(svc.name) && (
+                  <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Price breakdown */}
+      {editState.selectedServices.length > 0 && (
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white px-4 py-3">
+          <div className="mb-2 space-y-1">
+            {editState.selectedServices.map((svc) => (
+              <div key={svc} className="flex justify-between text-xs text-gray-600">
+                <span>{svc}</span>
+                {isOthers(svc) ? <span className="italic text-gray-400">manual</span>
+                  : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between border-t border-gray-100 pt-2 text-xs font-bold">
+            <span className="text-gray-700">Auto Total</span>
+            <span style={{ color: '#B8922A' }}>{formatPrice(autoTotal)}</span>
+          </div>
+          <div className="mt-2">
+            <label className="mb-1 block text-xs font-medium text-gray-500">Price Override — leave blank for auto</label>
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+              <input type="number" inputMode="decimal" min="0" step="0.01"
+                value={editState.manualPrice}
+                onChange={(e) => setEditState((s) => ({ ...s, manualPrice: e.target.value }))}
+                placeholder={String(autoTotal)}
+                className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-6 pr-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none" />
+            </div>
+            <p className="mt-0.5 text-xs text-gray-400">Charging: <strong style={{ color: '#B8922A' }}>{formatPrice(effectivePrice)}</strong></p>
+          </div>
+        </div>
+      )}
+
+      {/* Fields grid */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Time In</label>
+          <input type="time" value={editState.time_in}
+            onChange={(e) => setEditState((s) => ({ ...s, time_in: e.target.value }))}
+            className={fullInputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Payment</label>
+          <select value={editState.payment_method}
+            onChange={(e) => setEditState((s) => ({ ...s, payment_method: e.target.value }))}
+            className={fullInputCls}>
+            <option value="Pending">— Pending —</option>
+            {paymentMethods.map((pm) => <option key={pm.name} value={pm.name}>{pm.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
+          <select value={editState.status}
+            onChange={(e) => setEditState((s) => ({ ...s, status: e.target.value }))}
+            className={fullInputCls}>
+            <option value="Pending">Pending</option>
+            <option value="On Hand">On Hand</option>
+            <option value="Deposited">Deposited</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Team</label>
+          <select value={editState.team}
+            onChange={(e) => setEditState((s) => ({ ...s, team: e.target.value }))}
+            className={fullInputCls}>
+            <option value="">— No Team —</option>
+            {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2 sm:col-span-4">
+          <label className="mb-1 block text-xs font-medium text-gray-500">Notes</label>
+          <input type="text" value={editState.notes}
+            onChange={(e) => setEditState((s) => ({ ...s, notes: e.target.value }))}
+            placeholder="Optional notes…" className={fullInputCls} />
+        </div>
+      </div>
+
+      {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
+      <div className="mt-4 flex gap-2">
+        <button onClick={() => saveEdit(editingId!)}
+          disabled={saving || editState.selectedServices.length === 0 || !editState.size_category}
+          className="flex-1 rounded-xl py-3 text-sm font-bold text-white disabled:opacity-60 sm:flex-none sm:px-5 sm:py-2"
+          style={{ backgroundColor: '#B8922A' }}>
+          {saving ? 'Saving…' : `Save — ${formatPrice(effectivePrice)}`}
+        </button>
+        <button onClick={cancelEdit} disabled={saving}
+          className="rounded-xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-60 sm:py-2">
+          Cancel
+        </button>
+      </div>
+    </div>
+  ) : null
+
   return (
-    <div className="px-6 py-6">
+    <div className="px-3 py-4 sm:px-6 sm:py-6">
       <div className="mx-auto max-w-6xl">
 
         {/* Header */}
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Queue — <span style={{ color: '#B8922A' }}>{rangeLabel}</span>
+        <div className="mb-4 flex items-center justify-between gap-2 sm:mb-5">
+          <h1 className="text-lg font-bold text-gray-900 sm:text-2xl">
+            Queue <span className="hidden sm:inline">— </span>
+            <span className="text-sm font-medium sm:text-2xl sm:font-bold" style={{ color: '#B8922A' }}>
+              {rangeLabel}
+            </span>
           </h1>
           <div className="flex items-center gap-2">
             <ExportMenu onExport={handleExport} loading={exporting} />
             <Link href="/checkin"
-              className="rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-95"
-              style={{ backgroundColor: '#B8922A' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}>
-              + New Check-In
+              className="rounded-xl px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-95 sm:px-5 sm:py-3"
+              style={{ backgroundColor: '#B8922A' }}>
+              + Check-In
             </Link>
           </div>
         </div>
 
         {/* Date range */}
-        <div className="mb-5 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="mb-4 rounded-2xl bg-white p-3 shadow-sm sm:mb-5 sm:p-4">
           <DateRangeSelector value={range} onChange={(r) => { setRange(r); setEditingId(null) }} />
         </div>
 
-        {/* Summary cards */}
-        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
+        {/* Summary cards — 2 col on mobile, 5 on desktop */}
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:mb-6 sm:grid-cols-5 sm:gap-4">
           <SummaryCard label={carLabel}      value={String(totalCars)} />
-          <SummaryCard label="Total Revenue" value={formatPrice(totalRevenue)} highlight />
+          <SummaryCard label="Revenue"       value={formatPrice(totalRevenue)} highlight />
           <SummaryCard label="On Hand"       value={formatPrice(onHandTotal)} />
           <SummaryCard label="Deposited"     value={formatPrice(depositedTotal)} />
           <SummaryCard label="Pending"       value={formatPrice(pendingTotal)} />
@@ -357,174 +491,88 @@ export default function QueuePage() {
           <div className="rounded-2xl bg-white py-20 text-center shadow-sm">
             <p className="text-gray-400">No transactions found for this period.</p>
             <Link href="/checkin"
-              className="mt-4 inline-block rounded-xl px-5 py-3 text-sm font-semibold text-white transition"
-              style={{ backgroundColor: '#B8922A' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#D4AB4E' }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.backgroundColor = '#B8922A' }}>
+              className="mt-4 inline-block rounded-xl px-5 py-3 text-sm font-semibold text-white"
+              style={{ backgroundColor: '#B8922A' }}>
               Add the first one
             </Link>
           </div>
         ) : (
           <div className="rounded-2xl bg-white shadow-sm">
-
             {/* Edit panel */}
-            {editingId !== null && editRow && (
-              <div className="border-b border-amber-200 bg-amber-50 px-6 py-5">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-bold text-amber-800">
-                    Editing — {editRow.plate_number}
-                    {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
-                  </p>
-                  <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
-                </div>
+            {EditPanel}
 
-                {/* Size Category */}
-                <div className="mb-4">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Size Category</p>
-                  <div className="flex flex-wrap gap-2">
-                    {sizes.map((s) => (
-                      <button key={s.size_category} type="button"
-                        onClick={() => handleEditSizeChange(s.size_category)}
-                        className="rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all"
-                        style={{
-                          borderColor:     editState.size_category === s.size_category ? '#B8922A' : '#e5e7eb',
-                          backgroundColor: editState.size_category === s.size_category ? 'rgba(184,146,42,0.08)' : '#fff',
-                          color:           editState.size_category === s.size_category ? '#B8922A' : '#374151',
-                        }}>
-                        {s.size_category}
-                      </button>
-                    ))}
-                  </div>
-                  {isMotoEdit && (
-                    <p className="mt-2 rounded-lg px-3 py-1.5 text-xs font-medium"
-                      style={{ backgroundColor: 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
-                      {editState.size_category} — Available services: Basic Wash, Wax, Others
-                    </p>
-                  )}
-                </div>
-
-                {/* Services */}
-                <div className="mb-4">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Services</p>
-                  <div className="flex flex-wrap gap-2">
-                    {visibleEditServices.map((svc) => {
-                      const selected  = editState.selectedServices.includes(svc.name)
-                      const unitPrice = priceForService(svc.name, sizeForEdit)
-                      return (
-                        <button key={svc.name} type="button" onClick={() => toggleEditService(svc.name)}
-                          className="flex flex-col items-start rounded-xl border px-3 py-2 text-left text-xs transition-all"
-                          style={{
-                            borderColor:     selected ? '#B8922A' : '#e5e7eb',
-                            backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
-                            color:           selected ? '#B8922A' : '#374151',
-                          }}>
-                          <span className="font-semibold">{svc.name}</span>
-                          {!isOthers(svc.name) && unitPrice > 0 && (
-                            <span style={{ color: selected ? '#B8922A' : '#9ca3af' }}>{formatPrice(unitPrice)}</span>
-                          )}
-                          {isOthers(svc.name) && (
-                            <span className="italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>manual price</span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* Price breakdown */}
-                {editState.selectedServices.length > 0 && (
-                  <div className="mb-4 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                    <div className="mb-2 space-y-1">
-                      {editState.selectedServices.map((svc) => (
-                        <div key={svc} className="flex justify-between text-xs text-gray-600">
-                          <span>{svc}</span>
-                          {isOthers(svc)
-                            ? <span className="italic text-gray-400">manual</span>
-                            : <span>{formatPrice(priceForService(svc, sizeForEdit))}</span>}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex justify-between border-t border-gray-100 pt-2 text-xs font-bold">
-                      <span className="text-gray-700">Auto Total</span>
-                      <span style={{ color: '#B8922A' }}>{formatPrice(autoTotal)}</span>
-                    </div>
-                    <div className="mt-2">
-                      <label className="mb-1 block text-xs font-medium text-gray-500">Price Override — leave blank to use auto total</label>
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
-                        <input type="number" min="0" step="0.01" value={editState.manualPrice}
-                          onChange={(e) => setEditState((s) => ({ ...s, manualPrice: e.target.value }))}
-                          placeholder={String(autoTotal)}
-                          className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-6 pr-2 text-sm text-gray-900 focus:border-[#B8922A] focus:outline-none" />
+            {/* ── MOBILE: Card list (hidden on sm+) ── */}
+            <div className="divide-y divide-gray-100 sm:hidden">
+              {rows.map((row) => {
+                const isEditing = editingId === row.id
+                const isPending = row.status === 'Pending'
+                return (
+                  <div key={row.id}
+                    className={`px-4 py-3 ${isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : ''}`}>
+                    {/* Top row: plate + price */}
+                    <div className="flex items-start justify-between mb-1">
+                      <div>
+                        <span className="text-base font-bold tracking-wider text-gray-900">{row.plate_number}</span>
+                        {(row.make || row.model) && (
+                          <span className="ml-2 text-xs text-gray-500">{[row.make, row.model].filter(Boolean).join(' ')}</span>
+                        )}
                       </div>
-                      <p className="mt-0.5 text-xs text-gray-400">Charging: <strong style={{ color: '#B8922A' }}>{formatPrice(effectivePrice)}</strong></p>
+                      <span className="text-base font-bold" style={{ color: '#B8922A' }}>{formatPrice(row.price)}</span>
                     </div>
+                    {/* Service + size */}
+                    <p className="text-sm text-gray-700 mb-1">{row.service_name}</p>
+                    {/* Meta row */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 mb-2">
+                      <span>{formatTime(row.time_in)}</span>
+                      <span>{row.size_category}</span>
+                      {row.team && <span>🏷 {row.team}</span>}
+                      {!isSingleDay && row.date && (
+                        <span>{new Date(row.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</span>
+                      )}
+                    </div>
+                    {/* Status + payment */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusColor(row.status)}`}>
+                          {row.status}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {row.payment_method === 'Pending'
+                            ? <span className="italic text-blue-400">Pending</span>
+                            : row.payment_method}
+                        </span>
+                      </div>
+                      {/* Action buttons */}
+                      {isEditing ? (
+                        <span className="text-xs font-semibold" style={{ color: '#B8922A' }}>Editing…</span>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          {isPending && (
+                            <button onClick={() => openPayNow(row)}
+                              className="rounded-lg bg-green-500 px-3 py-1.5 text-xs font-bold text-white active:scale-95">
+                              💳 Pay
+                            </button>
+                          )}
+                          <button onClick={() => startEdit(row)}
+                            className="rounded-lg border px-3 py-1.5 text-xs font-semibold active:scale-95"
+                            style={{ borderColor: '#B8922A', color: '#B8922A' }}>
+                            Edit
+                          </button>
+                          <button onClick={() => setConfirmDeleteId(row.id)}
+                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-400 active:scale-95">
+                            Del
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {row.notes && <p className="mt-1 text-xs text-gray-400 italic">{row.notes}</p>}
                   </div>
-                )}
+                )
+              })}
+            </div>
 
-                {/* Other fields */}
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">Time In</label>
-                    <input type="time" value={editState.time_in}
-                      onChange={(e) => setEditState((s) => ({ ...s, time_in: e.target.value }))}
-                      className={fullInputCls} />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">Payment Method</label>
-                    <select value={editState.payment_method}
-                      onChange={(e) => setEditState((s) => ({ ...s, payment_method: e.target.value }))}
-                      className={fullInputCls}>
-                      <option value="Pending">— Pending —</option>
-                      {paymentMethods.map((pm) => <option key={pm.name} value={pm.name}>{pm.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">Status</label>
-                    <select value={editState.status}
-                      onChange={(e) => setEditState((s) => ({ ...s, status: e.target.value }))}
-                      className={fullInputCls}>
-                      <option value="Pending">Pending</option>
-                      <option value="On Hand">On Hand</option>
-                      <option value="Deposited">Deposited</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">Team</label>
-                    <select value={editState.team}
-                      onChange={(e) => setEditState((s) => ({ ...s, team: e.target.value }))}
-                      className={fullInputCls}>
-                      <option value="">— No Team —</option>
-                      {teams.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-4">
-                    <label className="mb-1 block text-xs font-medium text-gray-500">Notes</label>
-                    <input type="text" value={editState.notes}
-                      onChange={(e) => setEditState((s) => ({ ...s, notes: e.target.value }))}
-                      placeholder="Optional notes…" className={fullInputCls} />
-                  </div>
-                </div>
-
-                {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
-                <div className="mt-4 flex gap-2">
-                  <button onClick={() => saveEdit(editingId)} disabled={saving || editState.selectedServices.length === 0 || !editState.size_category}
-                    className="rounded-xl px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                    style={{ backgroundColor: '#B8922A' }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
-                    {saving ? 'Saving…' : `Save — ${formatPrice(effectivePrice)}`}
-                  </button>
-                  <button onClick={cancelEdit} disabled={saving}
-                    className="rounded-xl border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-60">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Table */}
-            <div className="overflow-x-auto">
+            {/* ── DESKTOP: Full table (hidden on mobile) ── */}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full min-w-[1000px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -610,21 +658,23 @@ export default function QueuePage() {
         )}
       </div>
 
-      {/* ── Pay Now Modal ── */}
+      {/* Pay Now Modal — sheet on mobile */}
       {payNowRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:px-4">
+          <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-sm sm:rounded-2xl">
             <h3 className="mb-1 text-base font-bold text-gray-900">Mark as Paid</h3>
             <p className="mb-4 text-sm text-gray-500">
-              {payNowRow.plate_number} · {payNowRow.service_name} · <strong style={{ color: '#B8922A' }}>{formatPrice(payNowRow.price)}</strong>
+              <strong className="text-gray-900">{payNowRow.plate_number}</strong>
+              {' · '}{payNowRow.service_name}
             </p>
-            <div className="space-y-3 mb-5">
+            <p className="mb-4 text-2xl font-bold" style={{ color: '#B8922A' }}>{formatPrice(payNowRow.price)}</p>
+            <div className="space-y-4 mb-5">
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Payment Method</label>
-                <div className="flex flex-wrap gap-2">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500">Payment Method</label>
+                <div className="grid grid-cols-2 gap-2">
                   {paymentMethods.map((pm) => (
                     <button key={pm.name} type="button" onClick={() => setPayNowMethod(pm.name)}
-                      className="rounded-xl border px-4 py-2 text-sm font-semibold transition-all"
+                      className="rounded-xl border py-3 text-sm font-semibold transition-all active:scale-95"
                       style={{
                         borderColor:     payNowMethod === pm.name ? '#B8922A' : '#e5e7eb',
                         backgroundColor: payNowMethod === pm.name ? 'rgba(184,146,42,0.08)' : '#fff',
@@ -636,11 +686,11 @@ export default function QueuePage() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Status</label>
-                <div className="flex gap-2">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500">Status</label>
+                <div className="grid grid-cols-2 gap-2">
                   {['On Hand', 'Deposited'].map((s) => (
                     <button key={s} type="button" onClick={() => setPayNowStatus(s)}
-                      className="flex-1 rounded-xl border py-2 text-sm font-semibold transition-all"
+                      className="rounded-xl border py-3 text-sm font-semibold transition-all active:scale-95"
                       style={{
                         borderColor:     payNowStatus === s ? '#B8922A' : '#e5e7eb',
                         backgroundColor: payNowStatus === s ? 'rgba(184,146,42,0.08)' : '#fff',
@@ -655,14 +705,12 @@ export default function QueuePage() {
             {payNowError && <p className="mb-3 text-sm text-red-600">{payNowError}</p>}
             <div className="flex gap-3">
               <button onClick={confirmPayNow} disabled={payNowSaving || !payNowMethod}
-                className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-                style={{ backgroundColor: '#B8922A' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
-                {payNowSaving ? 'Saving…' : `Confirm Payment — ${formatPrice(payNowRow.price)}`}
+                className="flex-1 rounded-xl py-4 text-sm font-bold text-white disabled:opacity-60 active:scale-95"
+                style={{ backgroundColor: '#B8922A' }}>
+                {payNowSaving ? 'Saving…' : 'Confirm Payment'}
               </button>
               <button onClick={() => setPayNowRow(null)} disabled={payNowSaving}
-                className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                className="rounded-xl border-2 border-gray-200 px-5 py-4 text-sm font-bold text-gray-600 hover:bg-gray-50">
                 Cancel
               </button>
             </div>
@@ -672,17 +720,17 @@ export default function QueuePage() {
 
       {/* Delete confirmation */}
       {confirmDeleteId !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:px-4">
+          <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-sm sm:rounded-2xl">
             <h3 className="mb-2 text-base font-bold text-gray-900">Delete Transaction</h3>
-            <p className="mb-5 text-sm text-gray-500">Are you sure you want to delete this transaction? This cannot be undone.</p>
+            <p className="mb-5 text-sm text-gray-500">Are you sure? This cannot be undone.</p>
             <div className="flex gap-3">
               <button onClick={() => deleteRow(confirmDeleteId)} disabled={deleting}
-                className="flex-1 rounded-lg bg-red-500 py-2.5 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-60">
+                className="flex-1 rounded-xl bg-red-500 py-4 text-sm font-bold text-white hover:bg-red-600 disabled:opacity-60 active:scale-95">
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
               <button onClick={() => setConfirmDeleteId(null)} disabled={deleting}
-                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                className="flex-1 rounded-xl border-2 border-gray-200 py-4 text-sm font-bold text-gray-600 hover:bg-gray-50">
                 Cancel
               </button>
             </div>
@@ -695,9 +743,9 @@ export default function QueuePage() {
 
 function SummaryCard({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 text-xl font-bold ${highlight ? 'text-[#B8922A]' : 'text-gray-900'}`}>{value}</p>
+    <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 truncate">{label}</p>
+      <p className={`mt-1 text-lg font-bold sm:text-xl ${highlight ? 'text-[#B8922A]' : 'text-gray-900'}`}>{value}</p>
     </div>
   )
 }
