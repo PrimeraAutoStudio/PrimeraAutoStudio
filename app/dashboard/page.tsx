@@ -48,30 +48,28 @@ function isAddon(svc: string): boolean {
   return !BASE_SERVICES.some((b) => b.toLowerCase() === svc.trim().toLowerCase())
 }
 
+// Smaller padding on mobile
 function StatCard({ label, value, sub, accent = false }: {
   label: string; value: string; sub?: string; accent?: boolean
 }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${accent ? 'text-[#B8922A]' : 'text-gray-900'}`}>{value}</p>
+    <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 truncate">{label}</p>
+      <p className={`mt-1 text-xl font-bold sm:text-2xl ${accent ? 'text-[#B8922A]' : 'text-gray-900'}`}>{value}</p>
       {sub && <p className="mt-0.5 text-xs text-gray-400">{sub}</p>}
     </div>
   )
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">{children}</h2>
+  return <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 sm:mb-4">{children}</h2>
 }
 
 interface TeamStats {
-  cars: number          // total cars
-  carwashes: number     // basic wash only count
-  addons: number        // add-on service count
-  revenue: number       // total revenue
-  addonMap:    Record<string, { count: number; revenue: number }>
-  sizeMap:     Record<string, number>
-  serviceMap:  Record<string, { count: number; revenue: number }>
+  cars: number; carwashes: number; addons: number; revenue: number
+  addonMap:   Record<string, { count: number; revenue: number }>
+  sizeMap:    Record<string, number>
+  serviceMap: Record<string, { count: number; revenue: number }>
 }
 
 type LeaderboardView = 'carwashes' | 'addons' | 'revenue'
@@ -140,7 +138,6 @@ export default function DashboardPage() {
     return servicePrices.find((sp) => sp.service_name === svcName && sp.size_category === sizeCat)?.price ?? 0
   }
 
-  // Snapshot
   const isSingleDay    = range.from === range.to
   const snapshotLabel  = isSingleDay ? "Today's Snapshot" : 'Period Summary'
   const carLabel       = isSingleDay ? 'Cars Today' : 'Total Cars'
@@ -150,7 +147,6 @@ export default function DashboardPage() {
   const onHandTotal    = txRange.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
   const depositedTotal = txRange.filter((t) => t.status === 'Deposited').reduce((s, t) => s + t.price, 0)
 
-  // Revenue chart
   const rangeDates    = range.from && range.to ? datesBetween(range.from, range.to) : [todayStr]
   const revenueByDate: Record<string, number> = {}
   const carsByDate:    Record<string, number> = {}
@@ -167,7 +163,6 @@ export default function DashboardPage() {
     : '—'
   const labelStep = rangeDates.length <= 7 ? 1 : rangeDates.length <= 14 ? 2 : rangeDates.length <= 31 ? 4 : 7
 
-  // Top services
   const svcMap: Record<string, { count: number; revenue: number }> = {}
   txRange.forEach((t) => {
     const svcs = t.service_name.split(',').map((s) => s.trim()).filter(Boolean)
@@ -180,13 +175,10 @@ export default function DashboardPage() {
   const topServices     = Object.entries(svcMap).sort((a, b) => b[1].count - a[1].count).slice(0, 5)
   const maxServiceCount = Math.max(...topServices.map((s) => s[1].count), 1)
 
-  // Payment
   const paymentMap: Record<string, number> = {}
   txRange.forEach((t) => { paymentMap[t.payment_method] = (paymentMap[t.payment_method] ?? 0) + t.price })
   const paymentTotal   = Object.values(paymentMap).reduce((s, v) => s + v, 0)
   const paymentEntries = Object.entries(paymentMap).sort((a, b) => b[1] - a[1])
-
-  // ── Team Stats ────────────────────────────────────────────────────────────
 
   const teamStats: Record<string, TeamStats> = {}
   teams.forEach((t) => { teamStats[t] = { cars: 0, carwashes: 0, addons: 0, revenue: 0, addonMap: {}, sizeMap: {}, serviceMap: {} } })
@@ -195,52 +187,38 @@ export default function DashboardPage() {
     if (!t.team) return
     const key = t.team
     if (!teamStats[key]) teamStats[key] = { cars: 0, carwashes: 0, addons: 0, revenue: 0, addonMap: {}, sizeMap: {}, serviceMap: {} }
-
     teamStats[key].cars++
     teamStats[key].revenue += t.price
-
-    // Size
     const sz = t.size_category || 'Unknown'
     teamStats[key].sizeMap[sz] = (teamStats[key].sizeMap[sz] ?? 0) + 1
-
-    // Services
     const svcs = t.service_name.split(',').map((s) => s.trim()).filter(Boolean)
     svcs.forEach((svc) => {
       const svcPrice = priceFor(svc, t.size_category)
-
-      // All services map
       if (!teamStats[key].serviceMap[svc]) teamStats[key].serviceMap[svc] = { count: 0, revenue: 0 }
       teamStats[key].serviceMap[svc].count++
       teamStats[key].serviceMap[svc].revenue += svcPrice
-
       if (isAddon(svc)) {
-        // Add-on tracking
         teamStats[key].addons++
         if (!teamStats[key].addonMap[svc]) teamStats[key].addonMap[svc] = { count: 0, revenue: 0 }
         teamStats[key].addonMap[svc].count++
         teamStats[key].addonMap[svc].revenue += svcPrice
       } else if (svc === 'Basic Wash') {
-        // Basic wash count
         teamStats[key].carwashes++
       }
     })
   })
 
-  // Sort per view
   function sortedFor(view: LeaderboardView) {
-    return teams
-      .filter((t) => teamStats[t])
-      .sort((a, b) => {
-        if (view === 'carwashes') return teamStats[b].carwashes - teamStats[a].carwashes
-        if (view === 'addons')   return teamStats[b].addons - teamStats[a].addons
-        return teamStats[b].revenue - teamStats[a].revenue
-      })
+    return teams.filter((t) => teamStats[t]).sort((a, b) => {
+      if (view === 'carwashes') return teamStats[b].carwashes - teamStats[a].carwashes
+      if (view === 'addons')   return teamStats[b].addons - teamStats[a].addons
+      return teamStats[b].revenue - teamStats[a].revenue
+    })
   }
 
   const sortedTeams    = sortedFor(lbView)
   const unassignedCars = txRange.filter((t) => !t.team).length
 
-  // Max value per view for progress bar
   const maxVal = Math.max(...sortedTeams.map((t) => {
     if (lbView === 'carwashes') return teamStats[t].carwashes
     if (lbView === 'addons')   return teamStats[t].addons
@@ -262,7 +240,6 @@ export default function DashboardPage() {
   function getTab(team: string): DropdownTab { return activeTab[team] ?? 'addons' }
   function setTab(team: string, tab: DropdownTab) { setActiveTab((prev) => ({ ...prev, [team]: tab })) }
 
-  // Export
   async function handleExport(fmt: ExportFormat) {
     setExporting(true)
     const rangeLabel = formatRangeLabel(range)
@@ -289,18 +266,18 @@ export default function DashboardPage() {
   if (loading) return <div className="flex min-h-[60vh] items-center justify-center"><p className="text-gray-400">Loading dashboard…</p></div>
 
   return (
-    <div className="px-6 py-6">
-      <div className="mx-auto max-w-5xl space-y-8">
+    <div className="px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8">
 
         {/* Header */}
         <div>
-          <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Dashboard</h1>
             <ExportMenu onExport={handleExport} loading={exporting} />
           </div>
-          <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
             <DateRangeSelector value={range} onChange={setRange} />
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-gray-400 hidden sm:block">
               Showing: <span className="font-medium text-gray-600">{formatRangeLabel(range)}</span>
             </p>
           </div>
@@ -308,22 +285,23 @@ export default function DashboardPage() {
 
         {/* Live Stats */}
         <section>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between sm:mb-3">
             <SectionTitle>Live — Today</SectionTitle>
             <span className="text-xs text-gray-400">
-              {liveLoading ? 'Refreshing…' : `${liveCars} car${liveCars !== 1 ? 's' : ''} · auto-refreshes every 30s`}
+              {liveLoading ? '…' : `${liveCars} car${liveCars !== 1 ? 's' : ''}`}
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {/* 2-col on mobile, 4-col on desktop */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
             <StatCard label="Cars Today" value={String(liveCars)} />
             <StatCard label="Revenue"    value={formatPHP(liveRevenue)} accent />
             <StatCard label="On Hand"    value={formatPHP(liveOnHand)} />
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Top Services</p>
               {liveTopServices.length === 0
-                ? <p className="text-sm text-gray-400">No data yet</p>
+                ? <p className="text-xs text-gray-400">No data yet</p>
                 : liveTopServices.map(([svc, cnt]) => (
-                    <div key={svc} className="flex items-center justify-between text-sm">
+                    <div key={svc} className="flex items-center justify-between text-xs sm:text-sm">
                       <span className="truncate text-gray-700">{svc}</span>
                       <span className="ml-2 font-bold text-gray-900">{cnt}</span>
                     </div>
@@ -335,7 +313,7 @@ export default function DashboardPage() {
         {/* Period Summary */}
         <section>
           <SectionTitle>{snapshotLabel}</SectionTitle>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
             <StatCard label={carLabel}  value={String(totalCars)} />
             <StatCard label={revLabel}  value={formatPHP(totalRevenue)} accent />
             <StatCard label="On Hand"   value={formatPHP(onHandTotal)} />
@@ -345,31 +323,35 @@ export default function DashboardPage() {
 
         {/* Revenue by Day */}
         <section>
-          <SectionTitle>Revenue by Day — {formatRangeLabel(range)}</SectionTitle>
-          <div className="grid gap-4 sm:grid-cols-3 mb-4">
+          <SectionTitle>Revenue by Day</SectionTitle>
+          {/* 1-col on mobile, 3-col on desktop */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 mb-3 sm:mb-4">
             <StatCard label="Total Cars"    value={String(totalCars)} />
             <StatCard label="Total Revenue" value={formatPHP(totalRevenue)} accent />
-            <StatCard label="Busiest Day"   value={busiestDay}
-              sub={busiestDay !== '—' ? `${chartCars[busiestIdx]} cars` : undefined} />
+            <div className="col-span-2 sm:col-span-1">
+              <StatCard label="Busiest Day" value={busiestDay}
+                sub={busiestDay !== '—' ? `${chartCars[busiestIdx]} cars` : undefined} />
+            </div>
           </div>
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
             <div className="overflow-x-auto">
               <div className="flex items-end gap-[3px]"
-                style={{ height: '140px', paddingTop: '32px', minWidth: rangeDates.length > 14 ? `${rangeDates.length * 20}px` : 'auto' }}>
+                style={{ height: '120px', paddingTop: '28px', minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
-                  const rev = chartRevenue[i]; const isToday = dateStr === todayStr
+                  const rev       = chartRevenue[i]
+                  const isToday   = dateStr === todayStr
                   const heightPct = rev > 0 ? Math.max((rev / maxRevenue) * 100, 5) : 0
-                  const dayNum = parseInt(dateStr.split('-')[2], 10)
+                  const dayNum    = parseInt(dateStr.split('-')[2], 10)
                   const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
                   return (
-                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center" style={{ minWidth: '16px' }}>
+                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center" style={{ minWidth: '14px' }}>
                       {rev > 0 && (
                         <div className="pointer-events-none absolute bottom-full mb-1 hidden whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white group-hover:block z-10">
                           {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {formatPHP(rev)}
                         </div>
                       )}
                       <span className="absolute text-[8px] font-semibold whitespace-nowrap"
-                        style={{ bottom: '20px', color: '#0a0a0a', transform: 'translateX(-50%)', left: '50%' }}>
+                        style={{ bottom: '18px', color: '#0a0a0a', transform: 'translateX(-50%)', left: '50%' }}>
                         {rev > 0 ? '₱' + Math.round(rev / 1000).toLocaleString() + 'k' : ''}
                       </span>
                       <div className="w-full rounded-t"
@@ -386,34 +368,39 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* ── Team Leaderboard ── */}
+        {/* Team Leaderboard */}
         <section>
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-3 flex items-center justify-between sm:mb-4">
             <SectionTitle>Team Leaderboard</SectionTitle>
             <span className="text-xs text-gray-400">{formatRangeLabel(range)}</span>
           </div>
           <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-
-            {/* Three category tabs */}
+            {/* Category tabs — icon only on mobile, icon+text on desktop */}
             <div className="flex border-b border-gray-100">
               {([
-                { key: 'carwashes', label: '🚗 Most Carwashes',  sub: 'Basic Wash count' },
-                { key: 'addons',    label: '⭐ Most Add-ons',    sub: 'Upsell count' },
-                { key: 'revenue',   label: '💰 Most Revenue',   sub: 'Total earnings' },
-              ] as { key: LeaderboardView; label: string; sub: string }[]).map(({ key, label, sub }) => (
+                { key: 'carwashes', icon: '🚗', label: 'Most Carwashes', sub: 'Basic Wash' },
+                { key: 'addons',    icon: '⭐', label: 'Most Add-ons',   sub: 'Upsells' },
+                { key: 'revenue',   icon: '💰', label: 'Most Revenue',   sub: 'Earnings' },
+              ] as { key: LeaderboardView; icon: string; label: string; sub: string }[]).map(({ key, icon, label, sub }) => (
                 <button key={key} onClick={() => setLbView(key)}
-                  className="flex-1 py-3 px-2 text-center transition-colors border-b-2"
+                  className="flex-1 py-3 px-1 text-center transition-colors border-b-2"
                   style={{
                     borderBottomColor: lbView === key ? '#B8922A' : 'transparent',
                     backgroundColor:   lbView === key ? 'rgba(184,146,42,0.05)' : 'transparent',
                   }}>
-                  <p className="text-xs font-semibold" style={{ color: lbView === key ? '#B8922A' : '#6b7280' }}>{label}</p>
-                  <p className="text-[10px] text-gray-400">{sub}</p>
+                  {/* Mobile: icon + sub only */}
+                  <p className="text-base sm:hidden">{icon}</p>
+                  <p className="text-[10px] sm:hidden" style={{ color: lbView === key ? '#B8922A' : '#9ca3af' }}>{sub}</p>
+                  {/* Desktop: full label */}
+                  <p className="hidden sm:block text-xs font-semibold" style={{ color: lbView === key ? '#B8922A' : '#6b7280' }}>
+                    {icon} {label}
+                  </p>
+                  <p className="hidden sm:block text-[10px] text-gray-400">{sub}</p>
                 </button>
               ))}
             </div>
 
-            <div className="p-5">
+            <div className="p-3 sm:p-5">
               {sortedTeams.length === 0 || sortedTeams.every((t) => teamStats[t].cars === 0) ? (
                 <p className="py-6 text-center text-sm text-gray-400">No team data for this period. Assign teams during check-in.</p>
               ) : (
@@ -426,7 +413,6 @@ export default function DashboardPage() {
                     const isFirst    = i === 0 && val > 0
                     const isExpanded = expandedTeam === team
                     const tab        = getTab(team)
-
                     const addonEntries   = Object.entries(stats.addonMap).sort((a, b) => b[1].count - a[1].count)
                     const sizeEntries    = SIZE_ORDER.filter((s) => stats.sizeMap[s] > 0).map((s) => [s, stats.sizeMap[s]] as [string, number])
                     const serviceEntries = Object.entries(stats.serviceMap).sort((a, b) => b[1].count - a[1].count)
@@ -435,56 +421,45 @@ export default function DashboardPage() {
 
                     return (
                       <div key={team} className="rounded-xl border border-gray-100 overflow-hidden">
-
-                        {/* Team row */}
-                        <div className="px-4 py-3">
+                        <div className="px-3 py-3 sm:px-4">
                           <div className="mb-2 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {isFirst && <span className="text-base">🏆</span>}
+                            <div className="flex items-center gap-1.5">
+                              {isFirst && <span className="text-sm">🏆</span>}
                               <span className="text-sm font-bold" style={{ color: isFirst ? color : '#374151' }}>
                                 #{i + 1} {team}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 flex-wrap justify-end">
-                              {/* Always show all three stats */}
-                              <div className="flex items-center gap-3 text-xs text-gray-500">
-                                <span title="Basic Wash count">
-                                  🚗 <strong className="text-gray-900">{stats.carwashes}</strong>
-                                </span>
-                                <span title="Add-on count">
-                                  ⭐ <strong className="text-gray-900">{stats.addons}</strong>
-                                </span>
-                                <span title="Revenue">
-                                  <strong className="text-gray-900">{formatPHP(stats.revenue)}</strong>
-                                </span>
+                            <div className="flex items-center gap-2">
+                              {/* Stats — condensed on mobile */}
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span>🚗 <strong className="text-gray-900">{stats.carwashes}</strong></span>
+                                <span>⭐ <strong className="text-gray-900">{stats.addons}</strong></span>
+                                <span className="hidden sm:inline"><strong className="text-gray-900">{formatPHP(stats.revenue)}</strong></span>
                               </div>
-                              <button
-                                onClick={() => setExpandedTeam(isExpanded ? null : team)}
-                                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                              <button onClick={() => setExpandedTeam(isExpanded ? null : team)}
+                                className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold"
                                 style={{ backgroundColor: isExpanded ? 'rgba(184,146,42,0.15)' : 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
-                                Details {isExpanded ? '▲' : '▼'}
+                                {isExpanded ? '▲' : '▼'}
                               </button>
                             </div>
                           </div>
-                          {/* Progress bar based on current view */}
                           <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
                             <div className="h-full rounded-full transition-all duration-500"
                               style={{ width: `${barPct}%`, backgroundColor: color }} />
                           </div>
-                          {/* Value label below bar */}
-                          <p className="mt-1 text-right text-[10px]" style={{ color }}>
-                            {teamValueLabel(team)}
-                          </p>
+                          <div className="mt-1 flex items-center justify-between">
+                            <p className="text-[10px] text-gray-400 sm:hidden">{formatPHP(stats.revenue)}</p>
+                            <p className="text-[10px] ml-auto" style={{ color }}>{teamValueLabel(team)}</p>
+                          </div>
                         </div>
 
-                        {/* Details dropdown */}
                         {isExpanded && (
                           <div className="border-t border-gray-100" style={{ backgroundColor: 'rgba(184,146,42,0.03)' }}>
                             <div className="flex border-b border-gray-100">
                               {([
                                 { key: 'addons',   label: `Add-ons (${stats.addons})` },
                                 { key: 'sizes',    label: `Sizes (${stats.cars})` },
-                                { key: 'services', label: 'All Services' },
+                                { key: 'services', label: 'Services' },
                               ] as { key: DropdownTab; label: string }[]).map(({ key, label }) => (
                                 <button key={key} onClick={() => setTab(team, key)}
                                   className="flex-1 py-2 text-xs font-semibold transition-colors border-b-2"
@@ -497,118 +472,102 @@ export default function DashboardPage() {
                                 </button>
                               ))}
                             </div>
-
-                            <div className="px-4 py-3">
-
-                              {/* Add-ons tab */}
+                            <div className="px-3 py-3 sm:px-4">
                               {tab === 'addons' && (
-                                addonEntries.length === 0 ? (
-                                  <p className="py-2 text-xs text-gray-400">No add-on services for this period.</p>
-                                ) : (
-                                  <>
-                                    <div className="space-y-1.5">
-                                      {addonEntries.map(([svc, { count, revenue }]) => (
-                                        <div key={svc} className="flex items-center justify-between text-xs">
-                                          <div className="flex items-center gap-2">
-                                            <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                                            <span className="text-gray-700 font-medium">{svc}</span>
-                                          </div>
-                                          <div className="flex items-center gap-3 text-gray-500">
-                                            <span className="font-semibold text-gray-900">×{count}</span>
-                                            <span className="w-20 text-right">{formatPHP(revenue)}</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                    <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
-                                      <span className="text-gray-500">Total add-on revenue</span>
-                                      <span style={{ color }}>{formatPHP(totalAddonRev)}</span>
-                                    </div>
-                                  </>
-                                )
-                              )}
-
-                              {/* Sizes tab */}
-                              {tab === 'sizes' && (
-                                sizeEntries.length === 0 ? (
-                                  <p className="py-2 text-xs text-gray-400">No size data.</p>
-                                ) : (
-                                  <>
-                                    <div className="space-y-2">
-                                      {sizeEntries.map(([size, count]) => {
-                                        const pct = stats.cars > 0 ? (count / stats.cars) * 100 : 0
-                                        return (
-                                          <div key={size}>
-                                            <div className="mb-1 flex justify-between text-xs">
-                                              <span className="font-medium text-gray-700">{size}</span>
-                                              <span className="text-gray-500">
-                                                <strong className="text-gray-900">{count}</strong> car{count !== 1 ? 's' : ''}
-                                                <span className="ml-2 text-gray-400">({pct.toFixed(0)}%)</span>
-                                              </span>
-                                            </div>
-                                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                                              <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
-                                            </div>
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                    <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
-                                      <span className="text-gray-500">Total cars</span>
-                                      <span style={{ color }}>{stats.cars}</span>
-                                    </div>
-                                  </>
-                                )
-                              )}
-
-                              {/* Services tab */}
-                              {tab === 'services' && (
-                                serviceEntries.length === 0 ? (
-                                  <p className="py-2 text-xs text-gray-400">No service data.</p>
-                                ) : (
-                                  <>
-                                    <div className="space-y-1.5">
-                                      {serviceEntries.map(([svc, { count, revenue }]) => {
-                                        const addon = isAddon(svc)
-                                        return (
+                                addonEntries.length === 0
+                                  ? <p className="py-2 text-xs text-gray-400">No add-ons this period.</p>
+                                  : <>
+                                      <div className="space-y-1.5">
+                                        {addonEntries.map(([svc, { count, revenue }]) => (
                                           <div key={svc} className="flex items-center justify-between text-xs">
                                             <div className="flex items-center gap-2">
-                                              <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
-                                                style={{ backgroundColor: addon ? color : '#d1d5db' }} />
+                                              <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                                               <span className="text-gray-700 font-medium">{svc}</span>
-                                              {addon && (
-                                                <span className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
-                                                  style={{ backgroundColor: 'rgba(184,146,42,0.1)', color }}>
-                                                  add-on
-                                                </span>
-                                              )}
                                             </div>
-                                            <div className="flex items-center gap-3 text-gray-500">
+                                            <div className="flex items-center gap-2 text-gray-500">
                                               <span className="font-semibold text-gray-900">×{count}</span>
-                                              <span className="w-20 text-right">{formatPHP(revenue)}</span>
+                                              <span className="w-16 text-right sm:w-20">{formatPHP(revenue)}</span>
                                             </div>
                                           </div>
-                                        )
-                                      })}
-                                    </div>
-                                    <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
-                                      <span className="text-gray-500">Total service revenue</span>
-                                      <span style={{ color }}>{formatPHP(totalSvcRev)}</span>
-                                    </div>
-                                  </>
-                                )
+                                        ))}
+                                      </div>
+                                      <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
+                                        <span className="text-gray-500">Total add-on revenue</span>
+                                        <span style={{ color }}>{formatPHP(totalAddonRev)}</span>
+                                      </div>
+                                    </>
                               )}
-
+                              {tab === 'sizes' && (
+                                sizeEntries.length === 0
+                                  ? <p className="py-2 text-xs text-gray-400">No size data.</p>
+                                  : <>
+                                      <div className="space-y-2">
+                                        {sizeEntries.map(([size, count]) => {
+                                          const pct = stats.cars > 0 ? (count / stats.cars) * 100 : 0
+                                          return (
+                                            <div key={size}>
+                                              <div className="mb-1 flex justify-between text-xs">
+                                                <span className="font-medium text-gray-700">{size}</span>
+                                                <span className="text-gray-500">
+                                                  <strong className="text-gray-900">{count}</strong>
+                                                  <span className="ml-1 text-gray-400">({pct.toFixed(0)}%)</span>
+                                                </span>
+                                              </div>
+                                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                                                <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+                                              </div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                      <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
+                                        <span className="text-gray-500">Total cars</span>
+                                        <span style={{ color }}>{stats.cars}</span>
+                                      </div>
+                                    </>
+                              )}
+                              {tab === 'services' && (
+                                serviceEntries.length === 0
+                                  ? <p className="py-2 text-xs text-gray-400">No service data.</p>
+                                  : <>
+                                      <div className="space-y-1.5">
+                                        {serviceEntries.map(([svc, { count, revenue }]) => {
+                                          const addon = isAddon(svc)
+                                          return (
+                                            <div key={svc} className="flex items-center justify-between text-xs">
+                                              <div className="flex items-center gap-2">
+                                                <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
+                                                  style={{ backgroundColor: addon ? color : '#d1d5db' }} />
+                                                <span className="text-gray-700 font-medium">{svc}</span>
+                                                {addon && (
+                                                  <span className="hidden sm:inline rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
+                                                    style={{ backgroundColor: 'rgba(184,146,42,0.1)', color }}>
+                                                    add-on
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="flex items-center gap-2 text-gray-500">
+                                                <span className="font-semibold text-gray-900">×{count}</span>
+                                                <span className="w-16 text-right sm:w-20">{formatPHP(revenue)}</span>
+                                              </div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                      <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-xs font-semibold">
+                                        <span className="text-gray-500">Total service revenue</span>
+                                        <span style={{ color }}>{formatPHP(totalSvcRev)}</span>
+                                      </div>
+                                    </>
+                              )}
                             </div>
                           </div>
                         )}
                       </div>
                     )
                   })}
-
-                  {/* Unassigned */}
                   {unassignedCars > 0 && (
-                    <div className="rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                    <div className="rounded-xl border border-dashed border-gray-200 px-3 py-2 sm:px-4 sm:py-3">
                       <div className="flex items-center justify-between text-xs text-gray-400">
                         <span>No Team Assigned</span>
                         <span>{unassignedCars} car{unassignedCars !== 1 ? 's' : ''}</span>
@@ -617,20 +576,20 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
-              <div className="mt-4 rounded-xl bg-gray-50 px-3 py-2">
+              <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2">
                 <p className="text-[10px] text-gray-400">
-                  Switch between <strong>Most Carwashes</strong> (Basic Wash count), <strong>Most Add-ons</strong> (upsell count), and <strong>Most Revenue</strong>. Each team shows all three stats — the progress bar follows the active category.
+                  Tap a category tab to re-rank. Tap <strong>▼</strong> for add-ons, sizes, and service breakdown.
                 </p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Top Services + Payment */}
-        <section className="grid gap-6 lg:grid-cols-2">
+        {/* Top Services + Payment — stacked on mobile, side by side on desktop */}
+        <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
           <div>
             <SectionTitle>Top Services</SectionTitle>
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
               {topServices.length === 0 ? (
                 <p className="py-6 text-center text-sm text-gray-400">No data for this period.</p>
               ) : (
@@ -640,10 +599,10 @@ export default function DashboardPage() {
                       <div className="mb-1 flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-gray-400">#{i + 1}</span>
-                          <span className="font-medium text-gray-800">{name}</span>
+                          <span className="font-medium text-gray-800 text-xs sm:text-sm">{name}</span>
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-gray-500">
-                          <span>{count} cars</span>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span>{count}×</span>
                           <span className="font-semibold text-gray-900">{formatPHP(revenue)}</span>
                         </div>
                       </div>
@@ -659,28 +618,28 @@ export default function DashboardPage() {
           </div>
 
           <div>
-            <SectionTitle>Payment Method Breakdown</SectionTitle>
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <SectionTitle>Payment Breakdown</SectionTitle>
+            <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
               {paymentEntries.length === 0 ? (
                 <p className="py-6 text-center text-sm text-gray-400">No data for this period.</p>
               ) : (
                 <>
-                  <div className="mb-5 flex h-5 w-full overflow-hidden rounded-full">
+                  <div className="mb-4 flex h-4 w-full overflow-hidden rounded-full sm:h-5 sm:mb-5">
                     {paymentEntries.map(([method, amount]) => (
                       <div key={method} title={`${method}: ${formatPHP(amount)}`}
                         style={{ width: `${(amount / paymentTotal) * 100}%`, backgroundColor: PAYMENT_COLORS[method] ?? '#9ca3af' }} />
                     ))}
                   </div>
-                  <div className="space-y-2.5">
+                  <div className="space-y-2">
                     {paymentEntries.map(([method, amount]) => {
                       const pct = ((amount / paymentTotal) * 100).toFixed(1)
                       return (
-                        <div key={method} className="flex items-center justify-between text-sm">
+                        <div key={method} className="flex items-center justify-between text-xs sm:text-sm">
                           <div className="flex items-center gap-2">
-                            <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: PAYMENT_COLORS[method] ?? '#9ca3af' }} />
+                            <span className="h-2.5 w-2.5 rounded-sm sm:h-3 sm:w-3" style={{ backgroundColor: PAYMENT_COLORS[method] ?? '#9ca3af' }} />
                             <span className="font-medium text-gray-700">{method}</span>
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-gray-500">
+                          <div className="flex items-center gap-2 text-gray-500">
                             <span>{pct}%</span>
                             <span className="font-semibold text-gray-900">{formatPHP(amount)}</span>
                           </div>
@@ -688,7 +647,7 @@ export default function DashboardPage() {
                       )
                     })}
                   </div>
-                  <div className="mt-4 flex justify-between border-t border-gray-100 pt-3 text-sm">
+                  <div className="mt-3 flex justify-between border-t border-gray-100 pt-2 text-xs sm:text-sm sm:mt-4 sm:pt-3">
                     <span className="font-semibold text-gray-500">Total</span>
                     <span className="font-bold text-gray-900">{formatPHP(paymentTotal)}</span>
                   </div>
