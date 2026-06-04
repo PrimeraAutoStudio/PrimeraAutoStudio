@@ -46,12 +46,10 @@ export default function CheckIn() {
   const [loading, setLoading]                   = useState(false)
   const [error, setError]                       = useState('')
 
-  // ── Success modal state ──────────────────────────────────────────────────
-  const [showSuccess, setShowSuccess]         = useState(false)
-  const [lastCheckin, setLastCheckin]         = useState<{ plate: string; services: string; price: number } | null>(null)
+  const [showSuccess, setShowSuccess]             = useState(false)
+  const [lastCheckin, setLastCheckin]             = useState<{ plate: string; services: string; price: number } | null>(null)
   const [isFreeWashSuccess, setIsFreeWashSuccess] = useState(false)
 
-  // Plate autocomplete
   const [plateSuggestions, setPlateSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions]   = useState(false)
   const plateRef      = useRef<HTMLDivElement>(null)
@@ -84,7 +82,6 @@ export default function CheckIn() {
     setForm((prev) => ({ ...prev, plate_number: plate, make: data?.make ?? prev.make, model: data?.model ?? prev.model }))
   }
 
-  // Loyalty
   const [loyaltyEnabled, setLoyaltyEnabled]     = useState(false)
   const [loyaltyPlate, setLoyaltyPlate]         = useState('')
   const [loyaltyCard, setLoyaltyCard]           = useState<LoyaltyCard | null | 'not_found'>('not_found')
@@ -110,7 +107,6 @@ export default function CheckIn() {
     else { setLoyaltyCard('not_found'); setLoyaltyPlate('') }
   }
 
-  // Load dropdowns
   useEffect(() => {
     async function loadDropdowns() {
       const [{ data: pl }, { data: sv }, { data: pm }, { data: sp }, { data: st }] = await Promise.all([
@@ -149,8 +145,8 @@ export default function CheckIn() {
     return 0
   }
 
-  const autoTotal      = selectedServices.reduce((sum, svc) => sum + priceForService(svc, form.size_category), 0)
-  const effectivePrice = isFreeWash ? 0 : (manualPrice !== '' ? parseFloat(manualPrice) || 0 : autoTotal)
+  const autoTotal        = selectedServices.reduce((sum, svc) => sum + priceForService(svc, form.size_category), 0)
+  const effectivePrice   = isFreeWash ? 0 : (manualPrice !== '' ? parseFloat(manualPrice) || 0 : autoTotal)
   const isPendingPayment = form.payment_method === '' || form.payment_method === 'Pending'
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
@@ -174,35 +170,28 @@ export default function CheckIn() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setError('')
-
     const { plate_number, size_category } = form
     if (!plate_number || !size_category || selectedServices.length === 0) {
       setError('Please fill in plate, size, and at least one service.'); return
     }
-
-    const now          = new Date()
-    const localDate    = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const localTime    = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
-    const serviceLabel = selectedServices.join(', ')
+    const now           = new Date()
+    const localDate     = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const localTime     = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+    const serviceLabel  = selectedServices.join(', ')
     const paymentMethod = form.payment_method || 'Pending'
-    const status = isPendingPayment ? 'Pending' : form.status
-
+    const status        = isPendingPayment ? 'Pending' : form.status
     setLoading(true)
-
     const { data: txData, error: txErr } = await supabase.from('transactions').insert({
       plate_number: plate_number.toUpperCase(), make: form.make, model: form.model,
       size_category, service_name: serviceLabel, price: effectivePrice,
       payment_method: paymentMethod, notes: form.notes, status,
       date: localDate, time_in: localTime, team: form.team || null,
     }).select('id').single()
-
     if (txErr) { setError(txErr.message); setLoading(false); return }
-
     const serviceRows = selectedServices.map((svc) => ({
       transaction_id: txData.id, service_name: svc, price: priceForService(svc, size_category),
     }))
     await supabase.from('transaction_services').insert(serviceRows)
-
     if (loyaltyEnabled) {
       const loyaltyPlateUp = loyaltyPlate.trim().toUpperCase() || plate_number.toUpperCase()
       if (cardFound) {
@@ -215,46 +204,54 @@ export default function CheckIn() {
         await supabase.from('loyalty_cards').insert({ plate_number: loyaltyPlateUp, wash_count: 1 })
       }
     }
-
     setLoading(false)
-
-    // Show success modal instead of inline message
     setLastCheckin({ plate: plate_number.toUpperCase(), services: serviceLabel, price: effectivePrice })
     setIsFreeWashSuccess(isFreeWash)
     setShowSuccess(true)
     resetForm()
   }
 
+  // Mobile-friendly input classes — larger touch targets, clear focus states
   const inputCls =
-    'w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 ' +
+    'w-full rounded-xl border border-gray-300 bg-white px-4 py-3.5 text-base text-gray-900 ' +
     'placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
-  const labelCls = 'mb-1 block text-sm font-medium text-gray-700'
+  const labelCls = 'mb-1.5 block text-sm font-semibold text-gray-700'
 
   return (
-    <div className="px-6 py-6">
+    // Reduced horizontal padding on mobile, more breathing room
+    <div className="px-3 py-4 sm:px-6 sm:py-6">
       <div className="mx-auto max-w-xl">
-        <div className="mb-6">
+
+        <div className="mb-4 sm:mb-6">
           <h1 className="text-xl font-bold text-gray-900">New Check-In</h1>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl bg-white p-6 shadow-sm">
+        <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl bg-white p-4 shadow-sm sm:p-6 sm:space-y-5">
 
-          {/* Plate Number */}
+          {/* Plate Number — large, prominent on mobile */}
           <div>
             <label className={labelCls}>Plate Number <span className="text-red-500">*</span></label>
             <div ref={plateRef} className="relative">
-              <input type="text" name="plate_number" value={form.plate_number}
+              <input
+                type="text"
+                name="plate_number"
+                value={form.plate_number}
                 onChange={handlePlateChange}
                 onFocus={() => plateSuggestions.length > 0 && setShowSuggestions(true)}
                 placeholder="e.g. ABC 1234"
-                className={`${inputCls} uppercase placeholder:normal-case`}
-                autoComplete="off" required />
+                // Larger text on mobile for easy reading
+                className={`${inputCls} uppercase placeholder:normal-case text-lg font-bold tracking-wider`}
+                autoComplete="off"
+                autoCapitalize="characters"
+                required
+              />
               {showSuggestions && plateSuggestions.length > 0 && (
                 <ul className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg">
                   {plateSuggestions.map((plate) => (
                     <li key={plate}>
+                      {/* Larger tap target on mobile */}
                       <button type="button" onClick={() => selectPlate(plate)}
-                        className="w-full px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-amber-50 hover:text-[#B8922A]">
+                        className="w-full px-4 py-3.5 text-left text-base font-semibold text-gray-800 hover:bg-amber-50 hover:text-[#B8922A] active:bg-amber-100">
                         {plate}
                       </button>
                     </li>
@@ -264,44 +261,54 @@ export default function CheckIn() {
             </div>
           </div>
 
-          {/* Make & Model */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Make & Model — side by side on all sizes */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Make</label>
-              <input type="text" name="make" value={form.make} onChange={handleChange} placeholder="e.g. Toyota" className={inputCls} />
+              <input type="text" name="make" value={form.make} onChange={handleChange}
+                placeholder="Toyota" className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>Model</label>
-              <input type="text" name="model" value={form.model} onChange={handleChange} placeholder="e.g. Vios" className={inputCls} />
+              <input type="text" name="model" value={form.model} onChange={handleChange}
+                placeholder="Vios" className={inputCls} />
             </div>
           </div>
 
-          {/* Size */}
+          {/* Size — full width select */}
           <div>
-            <label className={labelCls}>Size Category <span className="text-red-500">*</span></label>
-            <select name="size_category" value={form.size_category} onChange={handleSizeChange} className={inputCls} required>
+            <label className={labelCls}>Size <span className="text-red-500">*</span></label>
+            <select name="size_category" value={form.size_category} onChange={handleSizeChange}
+              className={inputCls} required>
               <option value="">Select size…</option>
               {sizes.map((row) => <option key={row.size_category} value={row.size_category}>{row.size_category}</option>)}
             </select>
           </div>
 
-          {/* Services */}
+          {/* Services — larger chips, easier to tap */}
           <div>
             <label className={labelCls}>Services <span className="text-red-500">*</span></label>
             {services.length === 0 ? <p className="text-sm text-gray-400">Loading services…</p> : (
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 {services.map((svc) => {
                   const selected  = selectedServices.includes(svc.name)
                   const unitPrice = form.size_category ? priceForService(svc.name, form.size_category) : null
                   return (
                     <button key={svc.name} type="button" onClick={() => toggleService(svc.name)}
-                      className="flex flex-col items-start rounded-xl border px-4 py-2.5 text-left transition-all"
-                      style={{ borderColor: selected ? '#B8922A' : '#e5e7eb', backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff', color: selected ? '#B8922A' : '#374151' }}>
-                      <span className="text-sm font-semibold">{svc.name}</span>
+                      // Full width on mobile grid, auto on desktop
+                      className="flex flex-col items-start rounded-xl border px-3 py-3 text-left transition-all active:scale-95 sm:px-4 sm:py-2.5"
+                      style={{
+                        borderColor:     selected ? '#B8922A' : '#e5e7eb',
+                        backgroundColor: selected ? 'rgba(184,146,42,0.08)' : '#fff',
+                        color:           selected ? '#B8922A' : '#374151',
+                      }}>
+                      <span className="text-sm font-semibold leading-tight">{svc.name}</span>
                       {isOthers(svc.name) ? (
-                        <span className="text-xs italic" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>Enter price manually</span>
-                      ) : unitPrice !== null ? (
-                        <span className="text-xs" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>
+                        <span className="text-xs italic mt-0.5" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>
+                          Enter price manually
+                        </span>
+                      ) : unitPrice !== null && unitPrice > 0 ? (
+                        <span className="text-xs mt-0.5" style={{ color: selected ? '#B8922A' : '#9ca3af' }}>
                           {isFreeWash ? 'FREE' : formatPHP(unitPrice)}
                         </span>
                       ) : null}
@@ -310,17 +317,20 @@ export default function CheckIn() {
                 })}
               </div>
             )}
-            {selectedServices.length === 0 && <p className="mt-1.5 text-xs text-gray-400">Tap to select one or more services.</p>}
+            {selectedServices.length === 0 && (
+              <p className="mt-1.5 text-xs text-gray-400">Tap to select one or more services.</p>
+            )}
           </div>
 
           {/* Price breakdown */}
           {selectedServices.length > 0 && (
             <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-              <div className="mb-2 space-y-1">
+              <div className="mb-2 space-y-1.5">
                 {selectedServices.map((svc) => (
                   <div key={svc} className="flex justify-between text-sm text-gray-600">
                     <span>{svc}</span>
-                    {isOthers(svc) ? <span className="italic text-gray-400">manual</span>
+                    {isOthers(svc)
+                      ? <span className="italic text-gray-400">manual</span>
                       : <span>{isFreeWash ? 'FREE' : formatPHP(priceForService(svc, form.size_category))}</span>}
                   </div>
                 ))}
@@ -331,16 +341,19 @@ export default function CheckIn() {
               </div>
               {!isFreeWash && (
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500">Price Override (₱) — leave blank to use auto total</label>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">
+                    Price Override — leave blank to use auto total
+                  </label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₱</span>
-                    <input type="number" min="0" step="0.01" value={manualPrice}
+                    <input type="number" inputMode="decimal" min="0" step="0.01"
+                      value={manualPrice}
                       onChange={(e) => setManualPrice(e.target.value)}
                       placeholder={String(autoTotal)}
-                      className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-7 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
+                      className="w-full rounded-lg border border-gray-300 bg-white py-3 pl-7 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
                   </div>
                   <p className="mt-1 text-xs text-gray-400">
-                    Total to charge: <strong style={{ color: '#B8922A' }}>{formatPHP(effectivePrice)}</strong>
+                    Charging: <strong style={{ color: '#B8922A' }}>{formatPHP(effectivePrice)}</strong>
                   </p>
                 </div>
               )}
@@ -354,9 +367,10 @@ export default function CheckIn() {
                 <p className="text-sm font-semibold text-gray-700">Primera Circle</p>
                 <p className="text-xs text-gray-400">Loyalty reward program</p>
               </div>
+              {/* Larger toggle for mobile */}
               <button type="button" onClick={handleLoyaltyToggle}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${loyaltyEnabled ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
-                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${loyaltyEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${loyaltyEnabled ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
+                <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${loyaltyEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
             {loyaltyEnabled && (
@@ -366,7 +380,8 @@ export default function CheckIn() {
                   <input type="text" value={loyaltyPlate}
                     onChange={(e) => setLoyaltyPlate(e.target.value.toUpperCase())}
                     placeholder="e.g. ABC 1234"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm uppercase focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
+                    autoCapitalize="characters"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm uppercase focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
                 </div>
                 {loyaltyLookingUp ? <p className="text-xs text-gray-400">Looking up…</p>
                   : loyaltyPlate.trim() === '' ? null
@@ -377,7 +392,7 @@ export default function CheckIn() {
                           <span className="font-semibold text-gray-700">{(loyaltyCard as LoyaltyCard).plate_number}</span>
                           <span style={{ color: '#B8922A' }} className="font-bold">{washCount} / {LOYALTY_THRESHOLD} washes</span>
                         </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
                           <div className="h-full rounded-full transition-all"
                             style={{ width: `${Math.min((washCount / LOYALTY_THRESHOLD) * 100, 100)}%`, backgroundColor: '#B8922A' }} />
                         </div>
@@ -394,7 +409,8 @@ export default function CheckIn() {
                       )}
                     </>
                   ) : (
-                    <p className="rounded-lg px-3 py-2 text-xs font-medium" style={{ backgroundColor: 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
+                    <p className="rounded-lg px-3 py-2 text-xs font-medium"
+                      style={{ backgroundColor: 'rgba(184,146,42,0.08)', color: '#B8922A' }}>
                       New loyalty card — will be created on submit
                     </p>
                   )}
@@ -402,20 +418,28 @@ export default function CheckIn() {
             )}
           </div>
 
-          {/* Team selector */}
+          {/* Team selector — 2 cols on mobile for compact layout */}
           {teams.length > 0 && (
             <div>
               <label className={labelCls}>Team</label>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
                 <button type="button" onClick={() => setForm((f) => ({ ...f, team: '' }))}
-                  className="rounded-xl border px-4 py-2 text-sm font-semibold transition-all"
-                  style={{ borderColor: form.team === '' ? '#B8922A' : '#e5e7eb', backgroundColor: form.team === '' ? 'rgba(184,146,42,0.08)' : '#fff', color: form.team === '' ? '#B8922A' : '#6b7280' }}>
-                  No Team
+                  className="rounded-xl border py-3 text-sm font-semibold transition-all active:scale-95"
+                  style={{
+                    borderColor:     form.team === '' ? '#B8922A' : '#e5e7eb',
+                    backgroundColor: form.team === '' ? 'rgba(184,146,42,0.08)' : '#fff',
+                    color:           form.team === '' ? '#B8922A' : '#6b7280',
+                  }}>
+                  None
                 </button>
                 {teams.map((t) => (
                   <button key={t} type="button" onClick={() => setForm((f) => ({ ...f, team: t }))}
-                    className="rounded-xl border px-4 py-2 text-sm font-semibold transition-all"
-                    style={{ borderColor: form.team === t ? '#B8922A' : '#e5e7eb', backgroundColor: form.team === t ? 'rgba(184,146,42,0.08)' : '#fff', color: form.team === t ? '#B8922A' : '#6b7280' }}>
+                    className="rounded-xl border py-3 text-sm font-semibold transition-all active:scale-95"
+                    style={{
+                      borderColor:     form.team === t ? '#B8922A' : '#e5e7eb',
+                      backgroundColor: form.team === t ? 'rgba(184,146,42,0.08)' : '#fff',
+                      color:           form.team === t ? '#B8922A' : '#6b7280',
+                    }}>
                     {t}
                   </button>
                 ))}
@@ -431,11 +455,13 @@ export default function CheckIn() {
               {paymentMethods.map((row) => <option key={row.name} value={row.name}>{row.name}</option>)}
             </select>
             {isPendingPayment && (
-              <p className="mt-1 text-xs text-blue-500">Payment will be marked as Pending — update in Queue when paid.</p>
+              <p className="mt-1 text-xs text-blue-500">
+                Payment will be marked as Pending — update in Queue when paid.
+              </p>
             )}
           </div>
 
-          {/* Status — only if payment selected */}
+          {/* Status */}
           {!isPendingPayment && (
             <div>
               <label className={labelCls}>Status</label>
@@ -443,7 +469,9 @@ export default function CheckIn() {
                 <option value="On Hand">On Hand</option>
                 <option value="Deposited">Deposited</option>
               </select>
-              <p className="mt-1 text-xs text-gray-400">On Hand = cash in register, Deposited = transferred to bank/account</p>
+              <p className="mt-1 text-xs text-gray-400">
+                On Hand = cash in register · Deposited = transferred to bank
+              </p>
             </div>
           )}
 
@@ -451,59 +479,60 @@ export default function CheckIn() {
           <div>
             <label className={labelCls}>Notes</label>
             <textarea name="notes" value={form.notes} onChange={handleChange}
-              placeholder="Optional notes…" rows={3} className={`${inputCls} resize-none`} />
+              placeholder="Optional notes…" rows={2}
+              className={`${inputCls} resize-none`} />
           </div>
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
-          {/* Submit */}
+          {/* Submit — sticky on mobile */}
           <button type="submit" disabled={loading}
-            className="w-full rounded-xl px-6 py-4 text-base font-semibold text-white transition active:scale-95 disabled:opacity-60"
+            className="w-full rounded-xl px-6 py-4 text-base font-bold text-white transition active:scale-95 disabled:opacity-60"
             style={{ backgroundColor: '#B8922A' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
             {loading ? 'Saving…'
-              : isFreeWash ? 'Submit FREE WASH Check-In'
-              : isPendingPayment ? `Submit — Pending Payment${selectedServices.length > 0 ? ` (${formatPHP(effectivePrice)})` : ''}`
-              : `Submit Check-In${selectedServices.length > 0 ? ` — ${formatPHP(effectivePrice)}` : ''}`}
+              : isFreeWash ? '🎉 Submit FREE WASH'
+              : isPendingPayment
+                ? `Submit — Pending${selectedServices.length > 0 ? ` (${formatPHP(effectivePrice)})` : ''}`
+                : `Submit${selectedServices.length > 0 ? ` — ${formatPHP(effectivePrice)}` : ''}`}
           </button>
 
         </form>
       </div>
 
-      {/* ── Success Modal ── */}
+      {/* Success Modal — full screen feel on mobile */}
       {showSuccess && lastCheckin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl text-center">
-            {/* Icon */}
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center px-0 sm:px-4">
+          <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl text-center sm:max-w-sm sm:rounded-2xl">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
               <span className="text-3xl">{isFreeWashSuccess ? '🎉' : '✓'}</span>
             </div>
-
             <h3 className="mb-1 text-lg font-bold text-gray-900">
               {isFreeWashSuccess ? 'Free Wash Redeemed!' : 'Added to Queue!'}
             </h3>
-            <p className="mb-1 text-sm font-semibold" style={{ color: '#B8922A' }}>{lastCheckin.plate}</p>
+            <p className="mb-1 text-base font-bold tracking-wider" style={{ color: '#B8922A' }}>
+              {lastCheckin.plate}
+            </p>
             <p className="mb-1 text-sm text-gray-600">{lastCheckin.services}</p>
-            <p className="mb-5 text-sm font-bold text-gray-900">
+            <p className="mb-6 text-lg font-bold text-gray-900">
               {isFreeWashSuccess ? 'FREE' : formatPHP(lastCheckin.price)}
             </p>
-
             <div className="flex gap-3">
               <button
                 onClick={() => { setShowSuccess(false); router.push('/queue') }}
-                className="flex-1 rounded-xl py-3 text-sm font-semibold text-white"
-                style={{ backgroundColor: '#B8922A' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#D4AB4E' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#B8922A' }}>
+                className="flex-1 rounded-xl py-4 text-base font-bold text-white active:scale-95"
+                style={{ backgroundColor: '#B8922A' }}>
                 View Queue
               </button>
               <button
                 onClick={() => setShowSuccess(false)}
-                className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                className="flex-1 rounded-xl border-2 border-gray-200 py-4 text-base font-bold text-gray-700 hover:bg-gray-50 active:scale-95">
                 New Check-In
               </button>
             </div>
+            {/* iOS-style bottom safe area spacer */}
+            <div className="h-safe-area-inset-bottom mt-2 sm:hidden" />
           </div>
         </div>
       )}
