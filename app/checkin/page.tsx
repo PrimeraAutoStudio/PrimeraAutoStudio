@@ -31,6 +31,21 @@ function formatPHP(n: number) {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2 })
 }
 
+// ── Auto-format helpers ───────────────────────────────────────────────────────
+
+// Plate: strip ALL spaces, uppercase, keep only letters + digits
+function formatPlate(raw: string): string {
+  return raw.replace(/\s/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+// Title case: capitalize first letter of each word, lowercase the rest
+function titleCase(raw: string): string {
+  return raw
+    .split(' ')
+    .map((w) => w.length === 0 ? '' : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+}
+
 export default function CheckIn() {
   const router = useRouter()
 
@@ -63,8 +78,9 @@ export default function CheckIn() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  // ── Plate handler: strip spaces, uppercase, no special chars ───────────────
   async function handlePlateChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const val = e.target.value.toUpperCase()
+    const val = formatPlate(e.target.value)
     setForm((prev) => ({ ...prev, plate_number: val }))
     if (plateDebounce.current) clearTimeout(plateDebounce.current)
     if (val.length < 2) { setPlateSuggestions([]); setShowSuggestions(false); return }
@@ -79,7 +95,12 @@ export default function CheckIn() {
     setShowSuggestions(false)
     const { data } = await supabase.from('transactions').select('plate_number, make, model')
       .eq('plate_number', plate).order('date', { ascending: false }).order('time_in', { ascending: false }).limit(1).maybeSingle()
-    setForm((prev) => ({ ...prev, plate_number: plate, make: data?.make ?? prev.make, model: data?.model ?? prev.model }))
+    setForm((prev) => ({
+      ...prev,
+      plate_number: plate,
+      make:  data?.make  ? titleCase(data.make)  : prev.make,
+      model: data?.model ? titleCase(data.model) : prev.model,
+    }))
   }
 
   const [loyaltyEnabled, setLoyaltyEnabled]     = useState(false)
@@ -149,8 +170,21 @@ export default function CheckIn() {
   const effectivePrice   = isFreeWash ? 0 : (manualPrice !== '' ? parseFloat(manualPrice) || 0 : autoTotal)
   const isPendingPayment = form.payment_method === '' || form.payment_method === 'Pending'
 
+  // ── Generic change handler — title case for make/model ────────────────────
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
-    const { name, value } = e.target; setForm((prev) => ({ ...prev, [name]: value }))
+    const { name, value } = e.target
+    if (name === 'make' || name === 'model') {
+      // Apply title case while typing (on each keystroke)
+      setForm((prev) => ({ ...prev, [name]: titleCase(value) }))
+    } else {
+      setForm((prev) => ({ ...prev, [name]: value }))
+    }
+  }
+
+  // On blur, clean up make/model (trim + title case)
+  function handleMakeModelBlur(e: React.FocusEvent<HTMLInputElement>) {
+    const { name, value } = e.target
+    setForm((prev) => ({ ...prev, [name]: titleCase(value.trim()) }))
   }
 
   function handleSizeChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -182,10 +216,19 @@ export default function CheckIn() {
     const status        = isPendingPayment ? 'Pending' : form.status
     setLoading(true)
     const { data: txData, error: txErr } = await supabase.from('transactions').insert({
-      plate_number: plate_number.toUpperCase(), make: form.make, model: form.model,
-      size_category, service_name: serviceLabel, price: effectivePrice,
-      payment_method: paymentMethod, notes: form.notes, status,
-      date: localDate, time_in: localTime, team: form.team || null,
+      // Final clean on submit just in case
+      plate_number: formatPlate(plate_number),
+      make:         titleCase(form.make.trim()),
+      model:        titleCase(form.model.trim()),
+      size_category,
+      service_name:   serviceLabel,
+      price:          effectivePrice,
+      payment_method: paymentMethod,
+      notes:          form.notes,
+      status,
+      date:     localDate,
+      time_in:  localTime,
+      team:     form.team || null,
     }).select('id').single()
     if (txErr) { setError(txErr.message); setLoading(false); return }
     const serviceRows = selectedServices.map((svc) => ({
@@ -193,7 +236,7 @@ export default function CheckIn() {
     }))
     await supabase.from('transaction_services').insert(serviceRows)
     if (loyaltyEnabled) {
-      const loyaltyPlateUp = loyaltyPlate.trim().toUpperCase() || plate_number.toUpperCase()
+      const loyaltyPlateUp = formatPlate(loyaltyPlate) || formatPlate(plate_number)
       if (cardFound) {
         const card = loyaltyCard as LoyaltyCard
         await supabase.from('loyalty_cards').update({
@@ -205,20 +248,18 @@ export default function CheckIn() {
       }
     }
     setLoading(false)
-    setLastCheckin({ plate: plate_number.toUpperCase(), services: serviceLabel, price: effectivePrice })
+    setLastCheckin({ plate: formatPlate(plate_number), services: serviceLabel, price: effectivePrice })
     setIsFreeWashSuccess(isFreeWash)
     setShowSuccess(true)
     resetForm()
   }
 
-  // Mobile-friendly input classes — larger touch targets, clear focus states
   const inputCls =
     'w-full rounded-xl border border-gray-300 bg-white px-4 py-3.5 text-base text-gray-900 ' +
     'placeholder:text-gray-400 focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20'
   const labelCls = 'mb-1.5 block text-sm font-semibold text-gray-700'
 
   return (
-    // Reduced horizontal padding on mobile, more breathing room
     <div className="px-3 py-4 sm:px-6 sm:py-6">
       <div className="mx-auto max-w-xl">
 
@@ -228,7 +269,7 @@ export default function CheckIn() {
 
         <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl bg-white p-4 shadow-sm sm:p-6 sm:space-y-5">
 
-          {/* Plate Number — large, prominent on mobile */}
+          {/* Plate Number */}
           <div>
             <label className={labelCls}>Plate Number <span className="text-red-500">*</span></label>
             <div ref={plateRef} className="relative">
@@ -238,8 +279,7 @@ export default function CheckIn() {
                 value={form.plate_number}
                 onChange={handlePlateChange}
                 onFocus={() => plateSuggestions.length > 0 && setShowSuggestions(true)}
-                placeholder="e.g. ABC 1234"
-                // Larger text on mobile for easy reading
+                placeholder="e.g. ABC1234"
                 className={`${inputCls} uppercase placeholder:normal-case text-lg font-bold tracking-wider`}
                 autoComplete="off"
                 autoCapitalize="characters"
@@ -249,7 +289,6 @@ export default function CheckIn() {
                 <ul className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg">
                   {plateSuggestions.map((plate) => (
                     <li key={plate}>
-                      {/* Larger tap target on mobile */}
                       <button type="button" onClick={() => selectPlate(plate)}
                         className="w-full px-4 py-3.5 text-left text-base font-semibold text-gray-800 hover:bg-amber-50 hover:text-[#B8922A] active:bg-amber-100">
                         {plate}
@@ -259,23 +298,40 @@ export default function CheckIn() {
                 </ul>
               )}
             </div>
+            <p className="mt-1 text-xs text-gray-400">No spaces — e.g. <strong>ABC1234</strong></p>
           </div>
 
-          {/* Make & Model — side by side on all sizes */}
+          {/* Make & Model */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Make</label>
-              <input type="text" name="make" value={form.make} onChange={handleChange}
-                placeholder="Toyota" className={inputCls} />
+              <input
+                type="text"
+                name="make"
+                value={form.make}
+                onChange={handleChange}
+                onBlur={handleMakeModelBlur}
+                placeholder="Toyota"
+                className={inputCls}
+                autoCapitalize="words"
+              />
             </div>
             <div>
               <label className={labelCls}>Model</label>
-              <input type="text" name="model" value={form.model} onChange={handleChange}
-                placeholder="Vios" className={inputCls} />
+              <input
+                type="text"
+                name="model"
+                value={form.model}
+                onChange={handleChange}
+                onBlur={handleMakeModelBlur}
+                placeholder="Vios"
+                className={inputCls}
+                autoCapitalize="words"
+              />
             </div>
           </div>
 
-          {/* Size — full width select */}
+          {/* Size */}
           <div>
             <label className={labelCls}>Size <span className="text-red-500">*</span></label>
             <select name="size_category" value={form.size_category} onChange={handleSizeChange}
@@ -285,7 +341,7 @@ export default function CheckIn() {
             </select>
           </div>
 
-          {/* Services — larger chips, easier to tap */}
+          {/* Services */}
           <div>
             <label className={labelCls}>Services <span className="text-red-500">*</span></label>
             {services.length === 0 ? <p className="text-sm text-gray-400">Loading services…</p> : (
@@ -295,7 +351,6 @@ export default function CheckIn() {
                   const unitPrice = form.size_category ? priceForService(svc.name, form.size_category) : null
                   return (
                     <button key={svc.name} type="button" onClick={() => toggleService(svc.name)}
-                      // Full width on mobile grid, auto on desktop
                       className="flex flex-col items-start rounded-xl border px-3 py-3 text-left transition-all active:scale-95 sm:px-4 sm:py-2.5"
                       style={{
                         borderColor:     selected ? '#B8922A' : '#e5e7eb',
@@ -367,7 +422,6 @@ export default function CheckIn() {
                 <p className="text-sm font-semibold text-gray-700">Primera Circle</p>
                 <p className="text-xs text-gray-400">Loyalty reward program</p>
               </div>
-              {/* Larger toggle for mobile */}
               <button type="button" onClick={handleLoyaltyToggle}
                 className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${loyaltyEnabled ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
                 <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${loyaltyEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -378,8 +432,8 @@ export default function CheckIn() {
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Loyalty Plate Number</label>
                   <input type="text" value={loyaltyPlate}
-                    onChange={(e) => setLoyaltyPlate(e.target.value.toUpperCase())}
-                    placeholder="e.g. ABC 1234"
+                    onChange={(e) => setLoyaltyPlate(formatPlate(e.target.value))}
+                    placeholder="e.g. ABC1234"
                     autoCapitalize="characters"
                     className="w-full rounded-lg border border-gray-200 bg-white px-3 py-3 text-sm uppercase focus:border-[#B8922A] focus:outline-none focus:ring-2 focus:ring-[#B8922A]/20" />
                 </div>
@@ -418,7 +472,7 @@ export default function CheckIn() {
             )}
           </div>
 
-          {/* Team selector — 2 cols on mobile for compact layout */}
+          {/* Team selector */}
           {teams.length > 0 && (
             <div>
               <label className={labelCls}>Team</label>
@@ -485,7 +539,6 @@ export default function CheckIn() {
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
-          {/* Submit — sticky on mobile */}
           <button type="submit" disabled={loading}
             className="w-full rounded-xl px-6 py-4 text-base font-bold text-white transition active:scale-95 disabled:opacity-60"
             style={{ backgroundColor: '#B8922A' }}
@@ -501,7 +554,7 @@ export default function CheckIn() {
         </form>
       </div>
 
-      {/* Success Modal — full screen feel on mobile */}
+      {/* Success Modal */}
       {showSuccess && lastCheckin && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center px-0 sm:px-4">
           <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl text-center sm:max-w-sm sm:rounded-2xl">
@@ -531,7 +584,6 @@ export default function CheckIn() {
                 New Check-In
               </button>
             </div>
-            {/* iOS-style bottom safe area spacer */}
             <div className="h-safe-area-inset-bottom mt-2 sm:hidden" />
           </div>
         </div>
