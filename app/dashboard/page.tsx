@@ -2,8 +2,16 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import DateRangeSelector, {
   DateRange,
   formatRangeLabel,
@@ -65,6 +73,26 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 sm:mb-4">{children}</h2>
 }
 
+const DEFAULT_SECTION_ORDER = ['live', 'summary', 'revenue', 'leaderboard', 'services-payment']
+const LS_KEY = 'dashboard-section-order'
+
+function SortableSection({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}>
+      <div className="group relative">
+        <button
+          {...attributes} {...listeners}
+          className="absolute -left-5 top-0 hidden cursor-grab touch-none select-none text-gray-300 group-hover:flex items-center sm:flex"
+          aria-label="Drag to reorder"
+          title="Drag to reorder"
+        >⠿</button>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 interface TeamStats {
   cars: number; carwashes: number; addons: number; revenue: number
   addonMap:   Record<string, { count: number; revenue: number }>
@@ -89,6 +117,21 @@ export default function DashboardPage() {
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
   const [activeTab, setActiveTab]       = useState<Record<string, DropdownTab>>({})
   const [lbView, setLbView]             = useState<LeaderboardView>('carwashes')
+  const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return DEFAULT_SECTION_ORDER
+    try { return JSON.parse(localStorage.getItem(LS_KEY) ?? 'null') ?? DEFAULT_SECTION_ORDER } catch { return DEFAULT_SECTION_ORDER }
+  })
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setSectionOrder((prev) => {
+      const next = arrayMove(prev, prev.indexOf(String(active.id)), prev.indexOf(String(over.id)))
+      localStorage.setItem(LS_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
   const [liveTx, setLiveTx]           = useState<Transaction[]>([])
   const [liveLoading, setLiveLoading] = useState(true)
@@ -267,26 +310,9 @@ export default function DashboardPage() {
 
   if (loading) return <div className="flex min-h-[60vh] items-center justify-center"><p className="text-gray-400">Loading dashboard…</p></div>
 
-  return (
-    <div className="px-3 py-4 sm:px-6 sm:py-6">
-      <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8">
-
-        {/* Header */}
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Dashboard</h1>
-            <ExportMenu onExport={handleExport} loading={exporting} />
-          </div>
-          <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
-            <DateRangeSelector value={range} onChange={setRange} />
-            <p className="mt-2 text-xs text-gray-400 hidden sm:block">
-              Showing: <span className="font-medium text-gray-600">{formatRangeLabel(range)}</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Live Stats */}
-        <section>
+  // ── Section renderers ──────────────────────────────────────────────────────
+  const sectionLive = (
+    <section>
           <div className="mb-2 flex items-center justify-between sm:mb-3">
             <SectionTitle>Live — Today</SectionTitle>
             <span className="text-xs text-gray-400">
@@ -310,10 +336,11 @@ export default function DashboardPage() {
                   ))}
             </div>
           </div>
-        </section>
+    </section>
+  )
 
-        {/* Period Summary */}
-        <section>
+  const sectionSummary = (
+    <section>
           <SectionTitle>{snapshotLabel}</SectionTitle>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
             <StatCard label={carLabel}         value={String(totalCars)} />
@@ -326,10 +353,11 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-        </section>
+    </section>
+  )
 
-        {/* Revenue by Day */}
-        <section>
+  const sectionRevenue = (
+    <section>
           <SectionTitle>Revenue by Day</SectionTitle>
           {/* 1-col on mobile, 3-col on desktop */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 mb-3 sm:mb-4">
@@ -373,10 +401,11 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </section>
+    </section>
+  )
 
-        {/* Team Leaderboard */}
-        <section>
+  const sectionLeaderboard = (
+    <section>
           <div className="mb-3 flex items-center justify-between sm:mb-4">
             <SectionTitle>Team Leaderboard</SectionTitle>
             <span className="text-xs text-gray-400">{formatRangeLabel(range)}</span>
@@ -590,10 +619,11 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </section>
+    </section>
+  )
 
-        {/* Top Services + Payment — stacked on mobile, side by side on desktop */}
-        <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+  const sectionServicesPayment = (
+    <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
           <div>
             <SectionTitle>Top Services</SectionTitle>
             <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
@@ -662,7 +692,47 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-        </section>
+    </section>
+  )
+
+  const sectionMap: Record<string, React.ReactNode> = {
+    live:             sectionLive,
+    summary:          sectionSummary,
+    revenue:          sectionRevenue,
+    leaderboard:      sectionLeaderboard,
+    'services-payment': sectionServicesPayment,
+  }
+
+  return (
+    <div className="px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-5xl">
+
+        {/* Header */}
+        <div className="mb-6 sm:mb-8">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h1 className="text-xl font-bold text-gray-900 sm:text-2xl">Dashboard</h1>
+            <ExportMenu onExport={handleExport} loading={exporting} />
+          </div>
+          <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
+            <DateRangeSelector value={range} onChange={setRange} />
+            <p className="mt-2 text-xs text-gray-400 hidden sm:block">
+              Showing: <span className="font-medium text-gray-600">{formatRangeLabel(range)}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Sortable sections */}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={sectionOrder} strategy={verticalListSortingStrategy}>
+            <div className="space-y-6 sm:space-y-8 pl-5 sm:pl-6">
+              {sectionOrder.map((id) => (
+                <SortableSection key={id} id={id}>
+                  {sectionMap[id]}
+                </SortableSection>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
 
       </div>
     </div>

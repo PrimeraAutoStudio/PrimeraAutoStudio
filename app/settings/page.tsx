@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
+import AdminOverrideModal from '@/app/components/AdminOverrideModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,8 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
   const [adding, setAdding]                 = useState(false)
   const [addError, setAddError]             = useState('')
   const [confirmDelete, setConfirmDelete]   = useState<ServiceRow | null>(null)
+  const [deleteOverrideOpen, setDeleteOverrideOpen] = useState(false)
+  const [pendingDeleteService, setPendingDeleteService] = useState<ServiceRow | null>(null)
 
   const loadData = useCallback(async () => {
     const [{ data: svData }, { data: plData }, { data: spData }] = await Promise.all([
@@ -197,7 +200,12 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
 
   async function deleteService(row: ServiceRow) {
     await supabase.from('services').delete().eq('id', row.id)
-    setConfirmDelete(null); loadData()
+    setConfirmDelete(null); setPendingDeleteService(null); loadData()
+  }
+
+  function requestDeleteService(row: ServiceRow) {
+    setPendingDeleteService(row)
+    setDeleteOverrideOpen(true)
   }
 
   async function addService() {
@@ -214,6 +222,12 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
   return (
     <div>
       <PanelTitle>Services</PanelTitle>
+      <AdminOverrideModal
+        open={deleteOverrideOpen}
+        onClose={() => { setDeleteOverrideOpen(false); setPendingDeleteService(null) }}
+        onGranted={() => { if (pendingDeleteService) deleteService(pendingDeleteService) }}
+        actionLabel="delete this service"
+      />
       {confirmDelete && (
         <ConfirmModal title="Delete Service"
           message={<>Delete <strong>{confirmDelete.name}</strong>? This cannot be undone.</>}
@@ -235,7 +249,7 @@ function ServicesPanel({ onDirty }: { onDirty: () => void }) {
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${row.is_active ? 'bg-[#B8922A]' : 'bg-gray-200'}`}>
                   <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${row.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
-                <button onClick={() => setConfirmDelete(row)} className="text-xs font-medium text-red-400">Del</button>
+                <button onClick={() => requestDeleteService(row)} className="text-xs font-medium text-red-400">Del</button>
               </div>
             </div>
             {expandedId === row.id && !isOthers(row.name) && (
@@ -346,6 +360,8 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
   const [confirmDeactivate, setConfirmDeactivate] = useState<EmployeeRow | null>(null)
+  const [empOverrideOpen, setEmpOverrideOpen] = useState(false)
+  const [pendingDeactivate, setPendingDeactivate] = useState<EmployeeRow | null>(null)
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('employees')
@@ -364,7 +380,12 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
 
   async function deactivateEmployee(row: EmployeeRow) {
     await supabase.from('employees').update({ is_active: false }).eq('id', row.id)
-    setConfirmDeactivate(null); load()
+    setConfirmDeactivate(null); setPendingDeactivate(null); load()
+  }
+
+  function requestDeactivate(row: EmployeeRow) {
+    setPendingDeactivate(row)
+    setEmpOverrideOpen(true)
   }
 
   async function saveEmployee() {
@@ -416,6 +437,12 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
 
   return (
     <div>
+      <AdminOverrideModal
+        open={empOverrideOpen}
+        onClose={() => { setEmpOverrideOpen(false); setPendingDeactivate(null) }}
+        onGranted={() => { if (pendingDeactivate) deactivateEmployee(pendingDeactivate) }}
+        actionLabel="remove this employee"
+      />
       {confirmDeactivate && (
         <ConfirmModal title="Remove Employee"
           message={<>Delete <strong>{confirmDeactivate.full_name}</strong>?</>}
@@ -444,7 +471,7 @@ function EmployeesPanel({ onDirty }: { onDirty: () => void }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => startEdit(row)} className="text-xs font-medium text-[#B8922A]">Edit</button>
-                    {row.is_active && <button onClick={() => setConfirmDeactivate(row)} className="text-xs font-medium text-red-400">Del</button>}
+                    {row.is_active && <button onClick={() => requestDeactivate(row)} className="text-xs font-medium text-red-400">Del</button>}
                   </div>
                 </div>
                 <div className="flex gap-4 text-xs text-gray-500">

@@ -118,6 +118,7 @@ export default function QueuePage() {
     status: '', notes: '', time_in: '', team: '', make: '', model: '',
   })
   const [visitCounts, setVisitCounts] = useState<Record<string, number>>({})
+  const [queueExpenses, setQueueExpenses] = useState(0)
   const [saving, setSaving]               = useState(false)
   const [saveError, setSaveError]         = useState('')
   const [exporting, setExporting]         = useState(false)
@@ -246,6 +247,12 @@ export default function QueuePage() {
         setVisitCounts(map)
       }
     }
+    // Fetch expenses for this date range
+    const { data: expData } = await supabase
+      .from('expenses').select('amount')
+      .gte('date', range.from).lte('date', range.to)
+      .neq('is_deleted', true)
+    setQueueExpenses((expData ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
     setLoading(false)
   }, [range])
 
@@ -257,9 +264,11 @@ export default function QueuePage() {
     }
   }, [fetchRows, range.preset])
 
-  const totalCars      = rows.length
-  const totalRevenue   = rows.reduce((s, r) => s + r.price, 0)
-  const onHandTotal    = rows.filter((r) => r.status === 'On Hand').reduce((s, r) => s + r.price, 0)
+  const totalCars    = rows.length
+  const totalRevenue = rows.reduce((s, r) => s + r.price, 0)
+  const onHandTotal  = rows.filter((r) => r.status === 'On Hand').reduce((s, r) => s + r.price, 0)
+  const netProfit    = totalRevenue - queueExpenses
+  // kept for PDF export summary
   const depositedTotal = rows.filter((r) => r.status === 'Deposited').reduce((s, r) => s + r.price, 0)
   const pendingTotal   = rows.filter((r) => r.status === 'Pending').reduce((s, r) => s + r.price, 0)
 
@@ -605,13 +614,18 @@ export default function QueuePage() {
           <DateRangeSelector value={range} onChange={(r) => { setRange(r); setEditingId(null) }} />
         </div>
 
-        {/* Summary cards — 2 col on mobile, 5 on desktop */}
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:mb-6 sm:grid-cols-5 sm:gap-4">
+        {/* Summary cards — 2 col on mobile, 4 on desktop */}
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:mb-6 sm:grid-cols-4 sm:gap-4">
           <SummaryCard label={carLabel}      value={String(totalCars)} />
           <SummaryCard label="Revenue"       value={formatPrice(totalRevenue)} highlight />
           <SummaryCard label="On Hand"       value={formatPrice(onHandTotal)} />
-          <SummaryCard label="Deposited"     value={formatPrice(depositedTotal)} />
-          <SummaryCard label="Pending"       value={formatPrice(pendingTotal)} />
+          <SummaryCard label="Expenses"      value={formatPrice(queueExpenses)} />
+          <div className="col-span-2 sm:col-span-1 rounded-2xl bg-white p-3 shadow-sm sm:p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400 truncate">Net Profit</p>
+            <p className={`mt-1 text-lg font-bold sm:text-xl ${netProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+              {formatPrice(netProfit)}
+            </p>
+          </div>
         </div>
 
         {loading ? (
