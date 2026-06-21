@@ -366,14 +366,14 @@ export default function PnLPage() {
     const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
     const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
-      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes').gte('date', range.from).lte('date', range.to).neq('is_deleted', true).order('date', { ascending: false }),
+      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes, is_deleted').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
       supabase.from('payables').select('amount'),
       supabase.from('transactions').select('date, price').gte('date', firstOfMonth).lte('date', lastOfMonth),
       supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label').eq('id', '1').single(),
     ])
     setTransactions(tx ?? [])
-    setExpenses((ex ?? []).map((e) => ({ ...e, id: String(e.id) })))
+    setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id) })))
     if (em) setEmployees(em.map((e) => ({ ...e, id: String(e.id) })))
     setPayables(pa ?? [])
     setTxMonth(txM ?? [])
