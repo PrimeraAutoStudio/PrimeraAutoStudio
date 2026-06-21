@@ -894,11 +894,9 @@ function AccountManagementPanel() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('users')
-      .select('id, username, full_name, role, is_active')
-      .order('full_name')
-    setUsers(data ?? [])
+    const res = await fetch('/api/admin/users')
+    const json = await res.json()
+    setUsers(json.users ?? [])
     setLoading(false)
   }, [])
 
