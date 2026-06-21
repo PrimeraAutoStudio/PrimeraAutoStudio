@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { decrypt } from '@/lib/session'
 
-const PUBLIC_ROUTES = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/hint', '/api/auth/employee-login']
+const PUBLIC_ROUTES = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/hint', '/api/auth/employee-login', '/api/debug-env']
 
 // Routes employees are NOT allowed to visit
 const ADMIN_ONLY_ROUTES = ['/dashboard', '/pnl', '/settings', '/loyalty', '/promos']
