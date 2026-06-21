@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import AdminOverrideModal from '@/app/components/AdminOverrideModal'
 import DateRangeSelector, {
   DateRange,
   formatRangeLabel,
@@ -37,6 +38,13 @@ interface Payable { amount: number }
 
 interface KpiTargets {
   revenue_target: number; car_count_target: number; expense_budget: number; kpi_label: string
+}
+
+function isPastMonth(dateStr: string): boolean {
+  const now = new Date()
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.getFullYear() < now.getFullYear() ||
+    (d.getFullYear() === now.getFullYear() && d.getMonth() < now.getMonth())
 }
 
 const CATEGORIES    = ['Food', 'Salary', 'Supplies', 'Gas', 'Equipment', 'Misc']
@@ -346,6 +354,8 @@ export default function PnLPage() {
   const [editError, setEditError]     = useState('')
   const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null)
   const [deletingExpense, setDeletingExpense] = useState(false)
+  const [deleteOverrideOpen, setDeleteOverrideOpen] = useState(false)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 
   const now = new Date()
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -356,7 +366,7 @@ export default function PnLPage() {
     const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
     const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
-      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
+      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes').gte('date', range.from).lte('date', range.to).eq('is_deleted', false).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
       supabase.from('payables').select('amount'),
       supabase.from('transactions').select('date, price').gte('date', firstOfMonth).lte('date', lastOfMonth),
@@ -455,6 +465,7 @@ export default function PnLPage() {
   }
 
   function startEditExpense(ex: Expense) {
+    if (isPastMonth(ex.date)) return
     setEditingExpenseId(ex.id)
     setEditExpense({ assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '' })
     setEditError('')
@@ -471,9 +482,16 @@ export default function PnLPage() {
     setEditingExpenseId(null)
   }
 
+  function requestDeleteExpense(id: string) {
+    setPendingDeleteId(id)
+    setDeleteOverrideOpen(true)
+  }
+
   async function deleteExpense(id: string) {
     setDeletingExpense(true)
-    const { error } = await supabase.from('expenses').delete().eq('id', id)
+    const { error } = await supabase.from('expenses')
+      .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+      .eq('id', id)
     setDeletingExpense(false)
     if (error) { console.error('delete expense error:', error.message); return }
     setExpenses((prev) => prev.filter((e) => e.id !== id))
@@ -817,10 +835,16 @@ export default function PnLPage() {
                                   <span className="text-xs text-gray-400">{ex.payment_type}</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <button onClick={() => startEditExpense(ex)}
-                                    className="text-xs font-medium text-[#B8922A]">Edit</button>
-                                  <button onClick={() => setConfirmDeleteExpenseId(ex.id)}
-                                    className="text-xs font-medium text-red-400">Del</button>
+                                  {isPastMonth(ex.date) ? (
+                                    <span className="text-[10px] text-gray-400 italic">Locked</span>
+                                  ) : (
+                                    <>
+                                      <button onClick={() => startEditExpense(ex)}
+                                        className="text-xs font-medium text-[#B8922A]">Edit</button>
+                                      <button onClick={() => requestDeleteExpense(ex.id)}
+                                        className="text-xs font-medium text-red-400">Del</button>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                               {ex.notes && <p className="mt-1 text-xs text-gray-400 italic">{ex.notes}</p>}
@@ -895,6 +919,8 @@ export default function PnLPage() {
                                       Cancel
                                     </button>
                                   </div>
+                                ) : isPastMonth(ex.date) ? (
+                                  <span className="text-xs text-gray-400 italic" title="Expenses from past months are locked. Contact admin if a correction is needed.">🔒 Locked</span>
                                 ) : (
                                   <div className="flex items-center gap-1.5">
                                     <button onClick={() => startEditExpense(ex)}
@@ -904,7 +930,7 @@ export default function PnLPage() {
                                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
                                       Edit
                                     </button>
-                                    <button onClick={() => setConfirmDeleteExpenseId(ex.id)}
+                                    <button onClick={() => requestDeleteExpense(ex.id)}
                                       className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50">
                                       Del
                                     </button>
@@ -932,12 +958,23 @@ export default function PnLPage() {
         )}
       </div>
 
+      {/* Admin Override Modal for expense delete */}
+      <AdminOverrideModal
+        open={deleteOverrideOpen}
+        onClose={() => { setDeleteOverrideOpen(false); setPendingDeleteId(null) }}
+        onGranted={() => {
+          if (pendingDeleteId) setConfirmDeleteExpenseId(pendingDeleteId)
+          setPendingDeleteId(null)
+        }}
+        actionLabel="delete this expense"
+      />
+
       {/* Delete confirmation — bottom sheet on mobile */}
       {confirmDeleteExpenseId !== null && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:px-4">
           <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-sm sm:rounded-2xl">
             <h3 className="mb-2 text-base font-bold text-gray-900">Delete Expense</h3>
-            <p className="mb-5 text-sm text-gray-500">Are you sure? This cannot be undone.</p>
+            <p className="mb-5 text-sm text-gray-500">This will be soft-deleted and hidden from P&amp;L. It cannot be restored from the UI.</p>
             <div className="flex gap-3">
               <button onClick={() => deleteExpense(confirmDeleteExpenseId)} disabled={deletingExpense}
                 className="flex-1 rounded-xl bg-red-500 py-3.5 text-sm font-bold text-white hover:bg-red-600 disabled:opacity-60">

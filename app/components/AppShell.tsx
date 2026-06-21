@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useAuth } from '@/app/context/AuthContext'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,16 @@ function IconLoyalty() {
   )
 }
 
+function IconLogout() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0">
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  )
+}
+
 function IconSettings() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0">
@@ -93,27 +104,29 @@ function IconClose() {
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
-const MAIN_NAV = [
-  { href: '/dashboard', label: 'Dashboard',      Icon: IconDashboard },
-  { href: '/checkin',   label: 'Check In',       Icon: IconCheckIn   },
-  { href: '/queue',     label: 'Queue',          Icon: IconQueue     },
-  { href: '/pnl',       label: 'P&L Tracker',    Icon: IconPnL       },
-  { href: '/loyalty',   label: 'Primera Circle', Icon: IconLoyalty   },
-  { href: '/promos',    label: 'Promos',         Icon: IconPromos    },
-] as const
+type Role = 'employee' | 'admin'
 
-const BOTTOM_NAV = [
-  { href: '/settings', label: 'Settings', Icon: IconSettings },
-] as const
+const MAIN_NAV: { href: string; label: string; Icon: () => React.ReactElement; roles: Role[] }[] = [
+  { href: '/dashboard', label: 'Dashboard',      Icon: IconDashboard, roles: ['admin']             },
+  { href: '/checkin',   label: 'Check In',       Icon: IconCheckIn,   roles: ['employee', 'admin'] },
+  { href: '/queue',     label: 'Queue',          Icon: IconQueue,     roles: ['employee', 'admin'] },
+  { href: '/pnl',       label: 'P&L Tracker',    Icon: IconPnL,       roles: ['admin']             },
+  { href: '/loyalty',   label: 'Primera Circle', Icon: IconLoyalty,   roles: ['admin']             },
+  { href: '/promos',    label: 'Promos',         Icon: IconPromos,    roles: ['admin']             },
+]
+
+const BOTTOM_NAV: { href: string; label: string; Icon: () => React.ReactElement; roles: Role[] }[] = [
+  { href: '/settings', label: 'Settings', Icon: IconSettings, roles: ['admin'] },
+]
 
 const ALL_NAV = [...MAIN_NAV, ...BOTTOM_NAV]
 
-const BOTTOM_TABS = [
-  { href: '/dashboard', label: 'Home',     Icon: IconDashboard },
-  { href: '/checkin',   label: 'Check In', Icon: IconCheckIn   },
-  { href: '/queue',     label: 'Queue',    Icon: IconQueue     },
-  { href: '/pnl',       label: 'P&L',      Icon: IconPnL       },
-  { href: '/settings',  label: 'Settings', Icon: IconSettings  },
+const BOTTOM_TABS: { href: string; label: string; Icon: () => React.ReactElement; roles: Role[] }[] = [
+  { href: '/dashboard', label: 'Home',     Icon: IconDashboard, roles: ['admin']             },
+  { href: '/checkin',   label: 'Check In', Icon: IconCheckIn,   roles: ['employee', 'admin'] },
+  { href: '/queue',     label: 'Queue',    Icon: IconQueue,     roles: ['employee', 'admin'] },
+  { href: '/pnl',       label: 'P&L',      Icon: IconPnL,       roles: ['admin']             },
+  { href: '/settings',  label: 'Settings', Icon: IconSettings,  roles: ['admin']             },
 ]
 
 // ─── Desktop NavLink ──────────────────────────────────────────────────────────
@@ -159,7 +172,13 @@ function NavLink({ href, label, Icon, collapsed }: {
 // ─── Desktop Sidebar ──────────────────────────────────────────────────────────
 
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const { user, logout } = useAuth()
+  const role = user?.role ?? 'employee'
   const w = collapsed ? 64 : 220
+
+  const visibleMain = MAIN_NAV.filter((n) => n.roles.includes(role))
+  const visibleBottom = BOTTOM_NAV.filter((n) => n.roles.includes(role))
+
   return (
     <aside
       className="fixed left-0 top-0 z-40 flex h-screen flex-col transition-all duration-200"
@@ -183,7 +202,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       <div className="mx-3 mb-4 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
       <nav className="flex flex-col gap-1 px-2">
-        {MAIN_NAV.map(({ href, label, Icon }) => (
+        {visibleMain.map(({ href, label, Icon }) => (
           <NavLink key={href} href={href} label={label} Icon={Icon} collapsed={collapsed} />
         ))}
       </nav>
@@ -192,9 +211,26 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       <div className="mx-3 mb-2 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
       <nav className="flex flex-col gap-1 px-2 pb-2">
-        {BOTTOM_NAV.map(({ href, label, Icon }) => (
+        {visibleBottom.map(({ href, label, Icon }) => (
           <NavLink key={href} href={href} label={label} Icon={Icon} collapsed={collapsed} />
         ))}
+        {/* Logout */}
+        <button
+          onClick={logout}
+          title={collapsed ? 'Logout' : undefined}
+          className="group relative flex w-full items-center rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150"
+          style={{
+            gap: collapsed ? '0' : '12px',
+            justifyContent: collapsed ? 'center' : 'flex-start',
+            color: '#888',
+            backgroundColor: 'transparent',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.06)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = '#888'; e.currentTarget.style.backgroundColor = 'transparent' }}
+        >
+          <IconLogout />
+          {!collapsed && 'Logout'}
+        </button>
       </nav>
 
       <button
@@ -232,6 +268,10 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 
 function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname()
+  const { user, logout } = useAuth()
+  const role = user?.role ?? 'employee'
+  const visibleNav = ALL_NAV.filter((n) => n.roles.includes(role))
+
   useEffect(() => { onClose() }, [pathname])
 
   return (
@@ -250,6 +290,9 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
             <p className="mt-2 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#EDD98A' }}>
               Primera Auto Studio
             </p>
+            {user && (
+              <p className="mt-1 text-[10px]" style={{ color: '#666' }}>{user.fullName} · {user.role}</p>
+            )}
           </div>
           <button onClick={onClose}
             className="flex h-9 w-9 items-center justify-center rounded-full"
@@ -261,7 +304,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
         <div className="mx-4 mb-3 h-px" style={{ backgroundColor: '#1f1f1f' }} />
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
-          {ALL_NAV.map(({ href, label, Icon }) => {
+          {visibleNav.map(({ href, label, Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/')
             return (
               <Link key={href} href={href}
@@ -270,13 +313,21 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                   color: active ? '#B8922A' : '#aaa',
                   backgroundColor: active ? 'rgba(184,146,42,0.1)' : 'transparent',
                 }}>
-                {/* Gold icon always in drawer */}
-                <span style={{ color: active ? '#B8922A' : '#B8922A' }}><Icon /></span>
+                <span style={{ color: '#B8922A' }}><Icon /></span>
                 <span>{label}</span>
                 {active && <span className="ml-auto h-1.5 w-1.5 rounded-full" style={{ backgroundColor: '#B8922A' }} />}
               </Link>
             )
           })}
+          {/* Logout */}
+          <button
+            onClick={logout}
+            className="flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm font-semibold transition-colors"
+            style={{ color: '#aaa' }}
+          >
+            <span style={{ color: '#f87171' }}><IconLogout /></span>
+            <span>Logout</span>
+          </button>
         </nav>
 
         <p className="py-4 text-center text-[10px] uppercase tracking-widest" style={{ color: '#333' }}>
@@ -324,6 +375,10 @@ function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
 
 function BottomTabBar() {
   const pathname = usePathname()
+  const { user } = useAuth()
+  const role = user?.role ?? 'employee'
+  const visibleTabs = BOTTOM_TABS.filter((t) => t.roles.includes(role))
+
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-40 flex sm:hidden"
@@ -333,14 +388,13 @@ function BottomTabBar() {
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {BOTTOM_TABS.map(({ href, label, Icon }) => {
+      {visibleTabs.map(({ href, label, Icon }) => {
         const active = pathname === href || pathname.startsWith(href + '/')
         return (
           <Link key={href} href={href}
             className="flex flex-1 flex-col items-center justify-center py-2.5 transition-colors"
             style={{ color: active ? '#B8922A' : '#555' }}>
-            {/* Icons always gold tint, brighter when active */}
-            <span style={{ color: active ? '#B8922A' : '#B8922A', opacity: active ? 1 : 0.45 }}>
+            <span style={{ color: '#B8922A', opacity: active ? 1 : 0.45 }}>
               <Icon />
             </span>
             <span
@@ -348,7 +402,6 @@ function BottomTabBar() {
               style={{ color: active ? '#B8922A' : '#666' }}>
               {label}
             </span>
-            {/* Active indicator — gold dot */}
             {active && (
               <span className="mt-1 h-1 w-4 rounded-full" style={{ backgroundColor: '#B8922A' }} />
             )}
@@ -375,9 +428,15 @@ function DesktopTopBar() {
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const sidebarW = collapsed ? 64 : 220
+
+  // Login page renders without any shell chrome
+  if (pathname === '/login') {
+    return <>{children}</>
+  }
 
   return (
     <>

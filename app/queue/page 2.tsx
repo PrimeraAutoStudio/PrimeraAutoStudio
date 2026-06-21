@@ -5,8 +5,6 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/app/context/AuthContext'
-import AdminOverrideModal from '@/app/components/AdminOverrideModal'
 import DateRangeSelector, {
   DateRange,
   formatRangeLabel,
@@ -90,23 +88,6 @@ function statusColor(status: string) {
 }
 
 export default function QueuePage() {
-  const { user, adminOverride } = useAuth()
-  const isEmployee = user?.role === 'employee'
-  const canEditDelete = !isEmployee || adminOverride
-
-  // Pending privileged action — run it once admin override is granted
-  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
-  const [overrideOpen, setOverrideOpen] = useState(false)
-
-  function requireAdmin(action: () => void) {
-    if (canEditDelete) {
-      action()
-    } else {
-      setPendingAction(() => action)
-      setOverrideOpen(true)
-    }
-  }
-
   const [range, setRange]         = useState<DateRange>(rangeForPreset('today'))
   const [rows, setRows]           = useState<Transaction[]>([])
   const [loading, setLoading]     = useState(true)
@@ -121,72 +102,6 @@ export default function QueuePage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting]           = useState(false)
   const [teams, setTeams]                 = useState<string[]>(['Team A', 'Team B', 'Team C', 'Team D'])
-
-  // ── Bulk selection (admin only) ─────────────────────────────────────────
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [bulkStatus, setBulkStatus] = useState('')
-  const [bulkTeam, setBulkTeam] = useState('')
-  const [bulkPanel, setBulkPanel] = useState<'status' | 'team' | 'delete' | null>(null)
-  const [bulkOverrideOpen, setBulkOverrideOpen] = useState(false)
-  const [bulkPendingAction, setBulkPendingAction] = useState<(() => void) | null>(null)
-  const [bulkProcessing, setBulkProcessing] = useState(false)
-
-  function requireAdminBulk(action: () => void) {
-    if (canEditDelete) {
-      action()
-    } else {
-      setBulkPendingAction(() => action)
-      setBulkOverrideOpen(true)
-    }
-  }
-
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-
-  function toggleSelectAll() {
-    setSelected((prev) => prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)))
-  }
-
-  async function applyBulkStatus(status: string) {
-    if (!status || selected.size === 0) return
-    setBulkProcessing(true)
-    const ids = Array.from(selected)
-    const { error } = await supabase.from('transactions').update({ status }).in('id', ids)
-    setBulkProcessing(false)
-    if (error) { console.error('bulk status:', error.message); return }
-    setRows((prev) => prev.map((r) => selected.has(r.id) ? { ...r, status } : r))
-    setSelected(new Set())
-    setBulkPanel(null)
-  }
-
-  async function applyBulkTeam(team: string) {
-    if (selected.size === 0) return
-    setBulkProcessing(true)
-    const ids = Array.from(selected)
-    const { error } = await supabase.from('transactions').update({ team: team || null }).in('id', ids)
-    setBulkProcessing(false)
-    if (error) { console.error('bulk team:', error.message); return }
-    setRows((prev) => prev.map((r) => selected.has(r.id) ? { ...r, team: team || null } : r))
-    setSelected(new Set())
-    setBulkPanel(null)
-  }
-
-  async function applyBulkDelete() {
-    if (selected.size === 0) return
-    setBulkProcessing(true)
-    const ids = Array.from(selected)
-    const { error } = await supabase.from('transactions').delete().in('id', ids)
-    setBulkProcessing(false)
-    if (error) { console.error('bulk delete:', error.message); return }
-    setRows((prev) => prev.filter((r) => !selected.has(r.id)))
-    setSelected(new Set())
-    setBulkPanel(null)
-  }
 
   const [payNowRow, setPayNowRow]       = useState<Transaction | null>(null)
   const [payNowMethod, setPayNowMethod] = useState('')
@@ -596,14 +511,7 @@ export default function QueuePage() {
                     className={`px-4 py-3 ${isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : ''}`}>
                     {/* Top row: plate + price */}
                     <div className="flex items-start justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        {!isEmployee && (
-                          <input type="checkbox"
-                            checked={selected.has(row.id)}
-                            onChange={() => toggleSelect(row.id)}
-                            className="h-4 w-4 rounded accent-[#B8922A] shrink-0"
-                            onClick={(e) => e.stopPropagation()} />
-                        )}
+                      <div>
                         <span className="text-base font-bold tracking-wider text-gray-900">{row.plate_number}</span>
                         {(row.make || row.model) && (
                           <span className="ml-2 text-xs text-gray-500">{[row.make, row.model].filter(Boolean).join(' ')}</span>
@@ -645,12 +553,12 @@ export default function QueuePage() {
                               💳 Pay
                             </button>
                           )}
-                          <button onClick={() => requireAdmin(() => startEdit(row))}
+                          <button onClick={() => startEdit(row)}
                             className="rounded-lg border px-3 py-1.5 text-xs font-semibold active:scale-95"
                             style={{ borderColor: '#B8922A', color: '#B8922A' }}>
                             Edit
                           </button>
-                          <button onClick={() => requireAdmin(() => setConfirmDeleteId(row.id))}
+                          <button onClick={() => setConfirmDeleteId(row.id)}
                             className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-400 active:scale-95">
                             Del
                           </button>
@@ -668,14 +576,6 @@ export default function QueuePage() {
               <table className="w-full min-w-[1000px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
-                    {!isEmployee && (
-                      <th className="pl-4 py-3 w-8">
-                        <input type="checkbox"
-                          checked={rows.length > 0 && selected.size === rows.length}
-                          onChange={toggleSelectAll}
-                          className="h-4 w-4 rounded accent-[#B8922A]" />
-                      </th>
-                    )}
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Time In</th>
                     <th className="px-4 py-3">Plate</th>
@@ -695,15 +595,7 @@ export default function QueuePage() {
                     const isEditing = editingId === row.id
                     const isPending = row.status === 'Pending'
                     return (
-                      <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : selected.has(row.id) ? 'bg-amber-50/40' : 'hover:bg-gray-50'}>
-                        {!isEmployee && (
-                          <td className="pl-4 py-3 w-8">
-                            <input type="checkbox"
-                              checked={selected.has(row.id)}
-                              onChange={() => toggleSelect(row.id)}
-                              className="h-4 w-4 rounded accent-[#B8922A]" />
-                          </td>
-                        )}
+                      <tr key={row.id} className={isEditing ? 'bg-amber-50/60' : isPending ? 'bg-blue-50/40' : 'hover:bg-gray-50'}>
                         <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
                           {!isSingleDay && row.date
                             ? new Date(row.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
@@ -738,14 +630,14 @@ export default function QueuePage() {
                                   💳 Pay
                                 </button>
                               )}
-                              <button onClick={() => requireAdmin(() => startEdit(row))}
+                              <button onClick={() => startEdit(row)}
                                 className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
                                 style={{ borderColor: '#B8922A', color: '#B8922A' }}
                                 onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
                                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
                                 Edit
                               </button>
-                              <button onClick={() => requireAdmin(() => setConfirmDeleteId(row.id))}
+                              <button onClick={() => setConfirmDeleteId(row.id)}
                                 className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:border-red-400 hover:text-red-600 hover:bg-red-50">
                                 Del
                               </button>
@@ -823,124 +715,6 @@ export default function QueuePage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Admin Override Modal (single row) */}
-      <AdminOverrideModal
-        open={overrideOpen}
-        onClose={() => { setOverrideOpen(false); setPendingAction(null) }}
-        onGranted={() => {
-          if (pendingAction) {
-            pendingAction()
-            setPendingAction(null)
-          }
-        }}
-        actionLabel="edit or delete transactions"
-      />
-
-      {/* Admin Override Modal (bulk) */}
-      <AdminOverrideModal
-        open={bulkOverrideOpen}
-        onClose={() => { setBulkOverrideOpen(false); setBulkPendingAction(null) }}
-        onGranted={() => {
-          if (bulkPendingAction) {
-            bulkPendingAction()
-            setBulkPendingAction(null)
-          }
-        }}
-        actionLabel="bulk actions"
-      />
-
-      {/* ── Floating Bulk Action Bar (admin only, when rows selected) ── */}
-      {!isEmployee && selected.size > 0 && (
-        <div
-          className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-2xl px-4 py-3 shadow-2xl"
-          style={{ backgroundColor: '#111', border: '1px solid #2a2a2a', minWidth: '320px' }}
-        >
-          <div className="mb-2 flex items-center justify-between gap-4">
-            <span className="text-sm font-bold text-white">{selected.size} selected</span>
-            <button onClick={() => { setSelected(new Set()); setBulkPanel(null) }} className="text-xs text-gray-500 hover:text-white">✕ Clear</button>
-          </div>
-
-          {/* Action buttons */}
-          {bulkPanel === null && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => { setBulkStatus(''); setBulkPanel('status') }}
-                className="rounded-xl px-3 py-2 text-xs font-semibold text-white"
-                style={{ backgroundColor: '#1f1f1f', border: '1px solid #333' }}
-              >
-                Set Status
-              </button>
-              <button
-                onClick={() => { setBulkTeam(''); setBulkPanel('team') }}
-                className="rounded-xl px-3 py-2 text-xs font-semibold text-white"
-                style={{ backgroundColor: '#1f1f1f', border: '1px solid #333' }}
-              >
-                Set Team
-              </button>
-              <button
-                onClick={() => requireAdminBulk(() => setBulkPanel('delete'))}
-                className="rounded-xl px-3 py-2 text-xs font-semibold"
-                style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}
-              >
-                Delete All
-              </button>
-            </div>
-          )}
-
-          {/* Status sub-panel */}
-          {bulkPanel === 'status' && (
-            <div className="flex flex-wrap gap-2">
-              {['On Hand', 'Deposited', 'Pending'].map((s) => (
-                <button
-                  key={s}
-                  onClick={() => applyBulkStatus(s)}
-                  disabled={bulkProcessing}
-                  className="rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50"
-                  style={{ backgroundColor: '#B8922A', color: '#000' }}
-                >
-                  {bulkProcessing ? '…' : s}
-                </button>
-              ))}
-              <button onClick={() => setBulkPanel(null)} className="rounded-xl px-3 py-2 text-xs text-gray-500">Back</button>
-            </div>
-          )}
-
-          {/* Team sub-panel */}
-          {bulkPanel === 'team' && (
-            <div className="flex flex-wrap gap-2">
-              {['', ...teams].map((t) => (
-                <button
-                  key={t || '__none__'}
-                  onClick={() => applyBulkTeam(t)}
-                  disabled={bulkProcessing}
-                  className="rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50"
-                  style={{ backgroundColor: '#B8922A', color: '#000' }}
-                >
-                  {bulkProcessing ? '…' : t || 'No Team'}
-                </button>
-              ))}
-              <button onClick={() => setBulkPanel(null)} className="rounded-xl px-3 py-2 text-xs text-gray-500">Back</button>
-            </div>
-          )}
-
-          {/* Delete confirm sub-panel */}
-          {bulkPanel === 'delete' && (
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-xs text-gray-400">Delete {selected.size} transactions?</span>
-              <button
-                onClick={applyBulkDelete}
-                disabled={bulkProcessing}
-                className="rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
-                style={{ backgroundColor: 'rgba(239,68,68,0.9)', color: '#fff' }}
-              >
-                {bulkProcessing ? 'Deleting…' : 'Confirm Delete'}
-              </button>
-              <button onClick={() => setBulkPanel(null)} className="rounded-xl px-3 py-2 text-xs text-gray-500">Back</button>
-            </div>
-          )}
         </div>
       )}
 
