@@ -57,8 +57,8 @@ function LoginForm() {
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Login failed'); return }
       const from = searchParams.get('from')
-      if (from && from !== '/login') { router.replace(from) }
-      else { router.replace(data.redirectTo) }
+      const dest = (from && from !== '/login') ? from : data.redirectTo
+      window.location.href = dest
     } catch { setError('Network error. Please try again.') }
     finally { setLoading(false) }
   }
@@ -187,7 +187,7 @@ function RoleSelect({ onSelectAdmin }: { onSelectAdmin: () => void }) {
       const data = await res.json()
       if (!res.ok) { setEmpError(data.error ?? 'Login failed'); return }
       const from = searchParams.get('from')
-      router.replace(from && from !== '/login' ? from : data.redirectTo)
+      window.location.href = (from && from !== '/login') ? from : data.redirectTo
     } catch { setEmpError('Network error. Please try again.') }
     finally { setEmpLoading(false) }
   }
