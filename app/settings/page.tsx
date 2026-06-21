@@ -22,7 +22,7 @@ interface ProfileRow {
   contact: string; email: string; gcash_merchant: string; maya_merchant: string; bpi_account: string
 }
 
-type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile' | 'teams' | 'backup'
+type Section = 'price_list' | 'services' | 'payment_methods' | 'employees' | 'payables' | 'profile' | 'teams' | 'backup' | 'accounts'
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
 
@@ -840,6 +840,201 @@ function BackupPanel() {
   )
 }
 
+// ─── Panel: Account Management ───────────────────────────────────────────────
+
+interface UserRow {
+  id: string; username: string; full_name: string | null; role: string; is_active: boolean
+}
+
+function EyeIconSm({ open }: { open: boolean }) {
+  return open ? (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  )
+}
+
+function PasswordInput({ value, onChange, placeholder = '••••••••', autoComplete }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; autoComplete?: string
+}) {
+  const [show, setShow] = React.useState(false)
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={`${inputCls} pr-10`}
+      />
+      <button type="button" onClick={() => setShow((v) => !v)} tabIndex={-1}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[#B8922A]">
+        <EyeIconSm open={show} />
+      </button>
+    </div>
+  )
+}
+
+function AccountManagementPanel() {
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [resetTarget, setResetTarget] = useState<UserRow | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordHint, setPasswordHint] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [modalError, setModalError] = useState('')
+  const [modalSuccess, setModalSuccess] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('users')
+      .select('id, username, full_name, role, is_active')
+      .order('full_name')
+    setUsers(data ?? [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  function openReset(user: UserRow) {
+    setResetTarget(user)
+    setNewPassword(''); setConfirmPassword(''); setPasswordHint('')
+    setAdminPassword(''); setModalError(''); setModalSuccess('')
+  }
+
+  function closeReset() { setResetTarget(null) }
+
+  async function handleReset() {
+    setModalError(''); setModalSuccess('')
+    if (!newPassword || !confirmPassword || !adminPassword) {
+      setModalError('All fields are required.'); return
+    }
+    if (newPassword !== confirmPassword) {
+      setModalError('Passwords do not match.'); return
+    }
+    if (newPassword.length < 6) {
+      setModalError('Password must be at least 6 characters.'); return
+    }
+    setSaving(true)
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUserId: resetTarget!.id,
+          newPassword,
+          confirmAdminPassword: adminPassword,
+          passwordHint: passwordHint || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setModalError(data.error ?? 'Reset failed.'); return }
+      setModalSuccess('Password updated successfully.')
+      setNewPassword(''); setConfirmPassword(''); setAdminPassword('')
+      setTimeout(() => closeReset(), 1500)
+    } catch { setModalError('Network error.') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div>
+      <PanelTitle>Account Management</PanelTitle>
+      <p className="mb-5 text-sm text-gray-500">Admin-only. Reset passwords and manage user access.</p>
+
+      {loading ? (
+        <p className="text-sm text-gray-400">Loading users…</p>
+      ) : (
+        <div className="space-y-2">
+          {users.map((u) => (
+            <div key={u.id} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{u.full_name ?? u.username}</p>
+                <p className="text-xs text-gray-400">
+                  @{u.username} · <span className="capitalize">{u.role}</span>
+                  {!u.is_active && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">Inactive</span>}
+                </p>
+              </div>
+              <button onClick={() => openReset(u)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+                style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
+                Reset Password
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reset Modal */}
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:px-4">
+          <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-md sm:rounded-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Reset Password</h3>
+                <p className="text-xs text-gray-500">@{resetTarget.username} · {resetTarget.full_name}</p>
+              </div>
+              <button onClick={closeReset} className="text-sm text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">New Password</label>
+                <PasswordInput value={newPassword} onChange={setNewPassword} autoComplete="new-password" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Confirm New Password</label>
+                <PasswordInput value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">
+                  Password Hint <span className="font-normal text-gray-400">(optional — plain text reminder, not the password)</span>
+                </label>
+                <input type="text" value={passwordHint} onChange={(e) => setPasswordHint(e.target.value)}
+                  placeholder="e.g. pet name + birth year" className={inputCls} />
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <label className="mb-1 block text-xs font-semibold text-amber-800">
+                  Your Admin Password <span className="font-normal">(required to confirm)</span>
+                </label>
+                <PasswordInput value={adminPassword} onChange={setAdminPassword} placeholder="Your current password" autoComplete="current-password" />
+              </div>
+            </div>
+
+            {modalError && (
+              <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-600">{modalError}</p>
+            )}
+            {modalSuccess && (
+              <p className="mt-3 rounded-xl bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700">{modalSuccess}</p>
+            )}
+
+            <div className="mt-5 flex gap-3">
+              <button onClick={handleReset} disabled={saving}
+                className="flex-1 rounded-xl py-3 text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: '#B8922A' }}>
+                {saving ? 'Saving…' : 'Reset Password'}
+              </button>
+              <button onClick={closeReset} disabled={saving}
+                className="rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
 const SECTIONS: { id: Section; label: string; short: string }[] = [
@@ -851,6 +1046,7 @@ const SECTIONS: { id: Section; label: string; short: string }[] = [
   { id: 'profile',         label: 'Business Profile',  short: 'Profile'  },
   { id: 'teams',           label: '🏆 Teams',          short: 'Teams'    },
   { id: 'backup',          label: '⬇ Backup',          short: 'Backup'   },
+  { id: 'accounts',        label: '🔐 Accounts',        short: 'Accounts' },
 ]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -929,8 +1125,9 @@ export default function SettingsPage() {
                 const isActive = active === id
                 return (
                   <li key={id}>
-                    {id === 'teams'  && <div className="my-2 border-t border-gray-100" />}
-                    {id === 'backup' && <div className="my-1" />}
+                    {id === 'teams'    && <div className="my-2 border-t border-gray-100" />}
+                    {id === 'backup'   && <div className="my-1" />}
+                    {id === 'accounts' && <div className="my-1" />}
                     <button onClick={() => handleNavClick(id)}
                       className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
                       style={{
@@ -956,6 +1153,7 @@ export default function SettingsPage() {
             {active === 'profile'         && <BusinessProfilePanel onDirty={markDirty} />}
             {active === 'teams'           && <TeamsPanel />}
             {active === 'backup'          && <BackupPanel />}
+            {active === 'accounts'        && <AccountManagementPanel />}
           </div>
         </div>
       </div>
