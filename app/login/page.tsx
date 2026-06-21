@@ -162,27 +162,49 @@ function LoginForm() {
   )
 }
 
-function RoleSelect({ onSelect }: { onSelect: (role: 'employee' | 'admin') => void }) {
+function RoleSelect({ onSelectAdmin, onEmployeeLogin }: {
+  onSelectAdmin: () => void
+  onEmployeeLogin: () => void
+}) {
+  const [empLoading, setEmpLoading] = useState(false)
+  const [empError, setEmpError] = useState('')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  async function handleEmployeeClick() {
+    setEmpLoading(true); setEmpError('')
+    try {
+      const res = await fetch('/api/auth/employee-login', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { setEmpError(data.error ?? 'Login failed'); return }
+      const from = searchParams.get('from')
+      router.replace(from && from !== '/login' ? from : data.redirectTo)
+    } catch { setEmpError('Network error. Please try again.') }
+    finally { setEmpLoading(false) }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <button
-        onClick={() => onSelect('employee')}
-        className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95"
+        onClick={handleEmployeeClick}
+        disabled={empLoading}
+        className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95 disabled:opacity-60"
         style={{ borderColor: '#2a2a2a', backgroundColor: '#1a1a1a' }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
+        onMouseEnter={(e) => { if (!empLoading) (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a2a' }}
       >
         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: '#222' }}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B8922A" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </div>
         <div>
-          <p className="font-bold text-white">Employee</p>
-          <p className="text-xs" style={{ color: '#666' }}>Check-in and queue access</p>
+          <p className="font-bold text-white">{empLoading ? 'Signing in…' : 'Employee'}</p>
+          <p className="text-xs" style={{ color: '#666' }}>Tap to sign in — check-in and queue access</p>
         </div>
       </button>
+      {empError && <p className="text-xs" style={{ color: '#f87171' }}>{empError}</p>}
 
       <button
-        onClick={() => onSelect('admin')}
+        onClick={onSelectAdmin}
         className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95"
         style={{ borderColor: '#2a2a2a', backgroundColor: '#1a1a1a' }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
@@ -200,49 +222,51 @@ function RoleSelect({ onSelect }: { onSelect: (role: 'employee' | 'admin') => vo
   )
 }
 
-export default function LoginPage() {
+function LoginInner() {
   const [selectedRole, setSelectedRole] = useState<'employee' | 'admin' | null>(null)
 
+  return (
+    <div className="w-full max-w-sm rounded-2xl p-8" style={{ backgroundColor: '#111', border: '1px solid #222' }}>
+      {!selectedRole ? (
+        <>
+          <h1 className="mb-1 text-xl font-bold text-white">Welcome</h1>
+          <p className="mb-6 text-sm" style={{ color: '#666' }}>How are you signing in?</p>
+          <RoleSelect onSelectAdmin={() => setSelectedRole('admin')} onEmployeeLogin={() => {}} />
+        </>
+      ) : (
+        <>
+          <div className="mb-5 flex items-center gap-3">
+            <button
+              onClick={() => setSelectedRole(null)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors"
+              style={{ backgroundColor: '#1a1a1a', color: '#888' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#B8922A' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#888' }}
+            >
+              ←
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-white">Admin Sign In</h1>
+              <p className="text-xs" style={{ color: '#666' }}>Enter your credentials</p>
+            </div>
+          </div>
+          <LoginForm />
+        </>
+      )}
+    </div>
+  )
+}
+
+export default function LoginPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4" style={{ backgroundColor: '#0a0a0a' }}>
       <div className="mb-8 flex flex-col items-center gap-3">
         <Image src="/Full_White Grad_No BG.svg" alt="Primera Auto Studio" width={160} height={70} priority className="h-auto w-[160px]" />
         <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: '#EDD98A' }}>Primera Auto Studio</p>
       </div>
-
-      <div className="w-full max-w-sm rounded-2xl p-8" style={{ backgroundColor: '#111', border: '1px solid #222' }}>
-        {!selectedRole ? (
-          <>
-            <h1 className="mb-1 text-xl font-bold text-white">Welcome</h1>
-            <p className="mb-6 text-sm" style={{ color: '#666' }}>How are you signing in?</p>
-            <RoleSelect onSelect={setSelectedRole} />
-          </>
-        ) : (
-          <>
-            <div className="mb-5 flex items-center gap-3">
-              <button
-                onClick={() => setSelectedRole(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors"
-                style={{ backgroundColor: '#1a1a1a', color: '#888' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#B8922A' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#888' }}
-              >
-                ←
-              </button>
-              <div>
-                <h1 className="text-xl font-bold text-white">
-                  {selectedRole === 'admin' ? 'Admin Sign In' : 'Employee Sign In'}
-                </h1>
-                <p className="text-xs" style={{ color: '#666' }}>Enter your credentials</p>
-              </div>
-            </div>
-            <Suspense fallback={null}>
-              <LoginForm />
-            </Suspense>
-          </>
-        )}
-      </div>
-
+      <Suspense fallback={null}>
+        <LoginInner />
+      </Suspense>
       <p className="mt-8 text-[10px] uppercase tracking-widest" style={{ color: '#333' }}>Auto Studio POS · Private Access</p>
     </div>
   )
