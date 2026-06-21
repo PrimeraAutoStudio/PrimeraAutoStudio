@@ -23,21 +23,23 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  const token = request.cookies.get('session')?.value
-  const payload = await decrypt(token)
-
-  if (!payload) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('from', pathname)
-    return NextResponse.redirect(loginUrl)
-  }
-
-  // Employees trying to access admin-only pages → redirect to /checkin
-  if (payload.role === 'employee' && ADMIN_ONLY_ROUTES.some((r) => pathname.startsWith(r))) {
-    return NextResponse.redirect(new URL('/checkin', request.url))
-  }
-
+  // AUTH DISABLED — remove this line to re-enable login
   return NextResponse.next()
+
+  // const token = request.cookies.get('session')?.value
+  // const payload = await decrypt(token)
+
+  // if (!payload) {
+  //   const loginUrl = new URL('/login', request.url)
+  //   loginUrl.searchParams.set('from', pathname)
+  //   return NextResponse.redirect(loginUrl)
+  // }
+
+  // if (payload.role === 'employee' && ADMIN_ONLY_ROUTES.some((r) => pathname.startsWith(r))) {
+  //   return NextResponse.redirect(new URL('/checkin', request.url))
+  // }
+
+  // return NextResponse.next()
 }
 
 export const config = {
