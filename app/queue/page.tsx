@@ -45,6 +45,8 @@ interface EditState {
   notes: string
   time_in: string
   team: string
+  make: string
+  model: string
 }
 
 const MOTO_SIZES           = ['Motorcycle', 'Big Bike', 'Tricycle']
@@ -113,8 +115,9 @@ export default function QueuePage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
     size_category: '', selectedServices: [], manualPrice: '', payment_method: '',
-    status: '', notes: '', time_in: '', team: '',
+    status: '', notes: '', time_in: '', team: '', make: '', model: '',
   })
+  const [visitCounts, setVisitCounts] = useState<Record<string, number>>({})
   const [saving, setSaving]               = useState(false)
   const [saveError, setSaveError]         = useState('')
   const [exporting, setExporting]         = useState(false)
@@ -226,7 +229,23 @@ export default function QueuePage() {
       .gte('date', range.from).lte('date', range.to)
       .order('date', { ascending: true }).order('time_in', { ascending: true })
     if (error) console.error('queue fetch:', error.message)
-    else setRows((data ?? []).map((r) => ({ ...r, id: String(r.id) })))
+    else {
+      const txData = (data ?? []).map((r) => ({ ...r, id: String(r.id) }))
+      setRows(txData)
+      // Fetch all-time visit counts for plates visible in this period
+      const plates = [...new Set(txData.map((r) => r.plate_number).filter(Boolean))]
+      if (plates.length > 0) {
+        const { data: vc } = await supabase
+          .from('transactions')
+          .select('plate_number')
+          .in('plate_number', plates)
+        const map: Record<string, number> = {}
+        ;(vc ?? []).forEach((r: { plate_number: string }) => {
+          map[r.plate_number] = (map[r.plate_number] ?? 0) + 1
+        })
+        setVisitCounts(map)
+      }
+    }
     setLoading(false)
   }, [range])
 
@@ -261,6 +280,10 @@ export default function QueuePage() {
   const autoTotal      = editState.selectedServices.reduce((sum, svc) => sum + priceForService(svc, sizeForEdit), 0)
   const effectivePrice = editState.manualPrice !== '' ? parseFloat(editState.manualPrice) || 0 : autoTotal
 
+  function toTitleCase(s: string) {
+    return s.replace(/\b\w/g, (c) => c.toUpperCase())
+  }
+
   function startEdit(row: Transaction) {
     setEditingId(row.id)
     setEditState({
@@ -269,6 +292,7 @@ export default function QueuePage() {
       manualPrice: '', payment_method: row.payment_method,
       status: row.status, notes: row.notes ?? '',
       time_in: row.time_in ?? '', team: row.team ?? '',
+      make: row.make ?? '', model: row.model ?? '',
     })
     setSaveError('')
   }
@@ -312,13 +336,15 @@ export default function QueuePage() {
       price: effectivePrice, payment_method: editState.payment_method,
       status: editState.status, notes: editState.notes,
       time_in: editState.time_in, team: editState.team || null,
+      make: editState.make || null, model: editState.model || null,
     }).eq('id', id)
     setSaving(false)
     if (error) { setSaveError(error.message); return }
     setRows((prev) => prev.map((r) =>
       r.id === id ? { ...r, size_category: editState.size_category, service_name: serviceLabel,
         price: effectivePrice, payment_method: editState.payment_method, status: editState.status,
-        notes: editState.notes, time_in: editState.time_in, team: editState.team || null } : r
+        notes: editState.notes, time_in: editState.time_in, team: editState.team || null,
+        make: editState.make || null, model: editState.model || null } : r
     ))
     setEditingId(null)
   }
@@ -389,6 +415,24 @@ export default function QueuePage() {
           {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
         </p>
         <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
+      </div>
+
+      {/* Make & Model */}
+      <div className="mb-4 grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Make</label>
+          <input type="text" value={editState.make}
+            onChange={(e) => setEditState((s) => ({ ...s, make: e.target.value }))}
+            onBlur={(e) => setEditState((s) => ({ ...s, make: toTitleCase(e.target.value) }))}
+            placeholder="e.g. Toyota" className={fullInputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Model</label>
+          <input type="text" value={editState.model}
+            onChange={(e) => setEditState((s) => ({ ...s, model: e.target.value }))}
+            onBlur={(e) => setEditState((s) => ({ ...s, model: toTitleCase(e.target.value) }))}
+            placeholder="e.g. Fortuner" className={fullInputCls} />
+        </div>
       </div>
 
       {/* Size */}
@@ -605,6 +649,11 @@ export default function QueuePage() {
                             onClick={(e) => e.stopPropagation()} />
                         )}
                         <span className="text-base font-bold tracking-wider text-gray-900">{row.plate_number}</span>
+                        {visitCounts[row.plate_number] > 0 && (
+                          <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                            {visitCounts[row.plate_number]}× visit
+                          </span>
+                        )}
                         {(row.make || row.model) && (
                           <span className="ml-2 text-xs text-gray-500">{[row.make, row.model].filter(Boolean).join(' ')}</span>
                         )}
@@ -710,7 +759,14 @@ export default function QueuePage() {
                             : '—'}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-700">{formatTime(row.time_in)}</td>
-                        <td className="whitespace-nowrap px-4 py-3 font-bold tracking-wide text-gray-900">{row.plate_number}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className="font-bold tracking-wide text-gray-900">{row.plate_number}</span>
+                          {visitCounts[row.plate_number] > 0 && (
+                            <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                              {visitCounts[row.plate_number]}×
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-gray-700">{[row.make, row.model].filter(Boolean).join(' ') || '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.size_category}</td>
                         <td className="px-4 py-3 text-gray-700">{row.service_name}</td>

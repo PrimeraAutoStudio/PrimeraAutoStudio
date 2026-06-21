@@ -81,6 +81,7 @@ export default function DashboardPage() {
 
   const [range, setRange]               = useState<DateRange>(rangeForPreset('today'))
   const [txRange, setTxRange]           = useState<Transaction[]>([])
+  const [totalExpenses, setTotalExpenses] = useState(0)
   const [servicePrices, setServicePrices] = useState<ServicePriceRow[]>([])
   const [loading, setLoading]           = useState(true)
   const [exporting, setExporting]       = useState(false)
@@ -119,16 +120,18 @@ export default function DashboardPage() {
     if (!range.from || !range.to) return
     async function load() {
       setLoading(true)
-      const [{ data: txR }, { data: st }, { data: sp }] = await Promise.all([
+      const [{ data: txR }, { data: st }, { data: sp }, { data: expR }] = await Promise.all([
         supabase.from('transactions')
           .select('date, price, status, service_name, payment_method, team, size_category')
           .gte('date', range.from).lte('date', range.to),
         supabase.from('settings').select('teams').eq('id', '1').single(),
         supabase.from('service_prices').select('service_name, size_category, price'),
+        supabase.from('expenses').select('amount').gte('date', range.from).lte('date', range.to).neq('is_deleted', true),
       ])
       setTxRange(txR ?? [])
       if (st?.teams) setTeams(st.teams)
       if (sp) setServicePrices(sp)
+      setTotalExpenses((expR ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
       setLoading(false)
     }
     load()
@@ -142,10 +145,9 @@ export default function DashboardPage() {
   const snapshotLabel  = isSingleDay ? "Today's Snapshot" : 'Period Summary'
   const carLabel       = isSingleDay ? 'Cars Today' : 'Total Cars'
   const revLabel       = isSingleDay ? 'Revenue Today' : 'Total Revenue'
-  const totalCars      = txRange.length
-  const totalRevenue   = txRange.reduce((s, t) => s + t.price, 0)
-  const onHandTotal    = txRange.filter((t) => t.status === 'On Hand').reduce((s, t) => s + t.price, 0)
-  const depositedTotal = txRange.filter((t) => t.status === 'Deposited').reduce((s, t) => s + t.price, 0)
+  const totalCars    = txRange.length
+  const totalRevenue = txRange.reduce((s, t) => s + t.price, 0)
+  const netProfit    = totalRevenue - totalExpenses
 
   const rangeDates    = range.from && range.to ? datesBetween(range.from, range.to) : [todayStr]
   const revenueByDate: Record<string, number> = {}
@@ -248,7 +250,7 @@ export default function DashboardPage() {
     const summaryRows: unknown[][] = [
       ['Metric', 'Value'], ['Period', rangeLabel],
       ['Total Cars', String(totalCars)], ['Total Revenue', formatPHP(totalRevenue)],
-      ['On Hand', formatPHP(onHandTotal)], ['Deposited', formatPHP(depositedTotal)],
+      ['Total Expenses', formatPHP(totalExpenses)], ['Net Profit', formatPHP(netProfit)],
     ]
     const serviceRows = topServices.map(([name, { count, revenue }], i) => [i + 1, name, count, formatPHP(revenue)])
     const paymentRows = paymentEntries.map(([m, a]) => [m, formatPHP(a), `${((a / (paymentTotal || 1)) * 100).toFixed(1)}%`])
@@ -314,10 +316,15 @@ export default function DashboardPage() {
         <section>
           <SectionTitle>{snapshotLabel}</SectionTitle>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
-            <StatCard label={carLabel}  value={String(totalCars)} />
-            <StatCard label={revLabel}  value={formatPHP(totalRevenue)} accent />
-            <StatCard label="On Hand"   value={formatPHP(onHandTotal)} />
-            <StatCard label="Deposited" value={formatPHP(depositedTotal)} />
+            <StatCard label={carLabel}         value={String(totalCars)} />
+            <StatCard label={revLabel}         value={formatPHP(totalRevenue)} accent />
+            <StatCard label="Total Expenses"   value={formatPHP(totalExpenses)} />
+            <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 truncate">Net Profit</p>
+              <p className={`mt-1 text-xl font-bold sm:text-2xl ${netProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                {formatPHP(netProfit)}
+              </p>
+            </div>
           </div>
         </section>
 
