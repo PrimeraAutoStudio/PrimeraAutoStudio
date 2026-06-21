@@ -27,13 +27,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
+    // Ensure the admin account always gets admin role regardless of DB value
+    const effectiveRole = user.username === 'admin' ? 'admin' : user.role
+
     const token = await encrypt({
       userId: user.id,
-      role: user.role,
+      role: effectiveRole,
       fullName: user.full_name,
     })
 
-    const redirectTo = user.role === 'admin' ? '/dashboard' : '/checkin'
+    const redirectTo = effectiveRole === 'admin' ? '/dashboard' : '/checkin'
 
     const response = NextResponse.json({ ok: true, role: user.role, redirectTo })
     response.cookies.set('session', token, {
