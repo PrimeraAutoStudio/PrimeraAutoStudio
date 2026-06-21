@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, FormEvent, Suspense } from 'react'
+import { useState, useEffect, FormEvent, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 
@@ -162,19 +162,28 @@ function LoginForm() {
   )
 }
 
-function RoleSelect({ onSelectAdmin, onEmployeeLogin }: {
-  onSelectAdmin: () => void
-  onEmployeeLogin: () => void
-}) {
+function RoleSelect({ onSelectAdmin }: { onSelectAdmin: () => void }) {
+  const [requirePassword, setRequirePassword] = useState(false)
+  const [showEmpPassword, setShowEmpPassword] = useState(false)
+  const [empPassword, setEmpPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [empLoading, setEmpLoading] = useState(false)
   const [empError, setEmpError] = useState('')
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  async function handleEmployeeClick() {
+  useEffect(() => {
+    fetch('/api/auth/employee-login').then(r => r.json()).then(d => setRequirePassword(d.requirePassword ?? false)).catch(() => {})
+  }, [])
+
+  async function doEmployeeLogin(password?: string) {
     setEmpLoading(true); setEmpError('')
     try {
-      const res = await fetch('/api/auth/employee-login', { method: 'POST' })
+      const res = await fetch('/api/auth/employee-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: password ?? '' }),
+      })
       const data = await res.json()
       if (!res.ok) { setEmpError(data.error ?? 'Login failed'); return }
       const from = searchParams.get('from')
@@ -183,25 +192,63 @@ function RoleSelect({ onSelectAdmin, onEmployeeLogin }: {
     finally { setEmpLoading(false) }
   }
 
+  function handleEmployeeClick() {
+    if (requirePassword) { setShowEmpPassword(true); setEmpError('') }
+    else doEmployeeLogin()
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <button
-        onClick={handleEmployeeClick}
-        disabled={empLoading}
-        className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95 disabled:opacity-60"
-        style={{ borderColor: '#2a2a2a', backgroundColor: '#1a1a1a' }}
-        onMouseEnter={(e) => { if (!empLoading) (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a2a' }}
-      >
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: '#222' }}>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B8922A" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        </div>
-        <div>
-          <p className="font-bold text-white">{empLoading ? 'Signing in…' : 'Employee'}</p>
-          <p className="text-xs" style={{ color: '#666' }}>Tap to sign in — check-in and queue access</p>
-        </div>
-      </button>
-      {empError && <p className="text-xs" style={{ color: '#f87171' }}>{empError}</p>}
+      <div>
+        <button
+          onClick={handleEmployeeClick}
+          disabled={empLoading}
+          className="group flex w-full items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95 disabled:opacity-60"
+          style={{ borderColor: showEmpPassword ? '#B8922A' : '#2a2a2a', backgroundColor: '#1a1a1a' }}
+          onMouseEnter={(e) => { if (!empLoading) (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
+          onMouseLeave={(e) => { if (!showEmpPassword) (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a2a' }}
+        >
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: '#222' }}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B8922A" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div>
+            <p className="font-bold text-white">{empLoading ? 'Signing in…' : 'Employee'}</p>
+            <p className="text-xs" style={{ color: '#666' }}>{requirePassword ? 'Password required' : 'Tap to sign in — check-in and queue access'}</p>
+          </div>
+        </button>
+
+        {showEmpPassword && (
+          <div className="mt-2 rounded-xl p-3" style={{ backgroundColor: '#1a1a1a', border: '1px solid #2a2a2a' }}>
+            <div className="relative mb-2">
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={empPassword}
+                onChange={(e) => setEmpPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && doEmployeeLogin(empPassword)}
+                placeholder="Employee password"
+                autoFocus
+                className="w-full rounded-lg px-3 py-2.5 pr-10 text-sm text-white placeholder:text-gray-600 focus:outline-none"
+                style={{ backgroundColor: '#111', border: '1px solid #333' }}
+              />
+              <button type="button" onClick={() => setShowPw(v => !v)} tabIndex={-1}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                {showPw
+                  ? <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                }
+              </button>
+            </div>
+            <button
+              onClick={() => doEmployeeLogin(empPassword)}
+              disabled={empLoading || !empPassword}
+              className="w-full rounded-lg py-2 text-sm font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor: '#B8922A' }}>
+              {empLoading ? 'Signing in…' : 'Sign In'}
+            </button>
+          </div>
+        )}
+        {empError && <p className="mt-1.5 text-xs" style={{ color: '#f87171' }}>{empError}</p>}
+      </div>
 
       <button
         onClick={onSelectAdmin}
@@ -231,7 +278,7 @@ function LoginInner() {
         <>
           <h1 className="mb-1 text-xl font-bold text-white">Welcome</h1>
           <p className="mb-6 text-sm" style={{ color: '#666' }}>How are you signing in?</p>
-          <RoleSelect onSelectAdmin={() => setSelectedRole('admin')} onEmployeeLogin={() => {}} />
+          <RoleSelect onSelectAdmin={() => setSelectedRole('admin')} />
         </>
       ) : (
         <>

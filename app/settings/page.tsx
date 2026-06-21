@@ -883,6 +883,15 @@ function PasswordInput({ value, onChange, placeholder = '•••••••�
 function AccountManagementPanel() {
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Employee login toggle
+  const [empRequirePassword, setEmpRequirePassword] = useState(false)
+  const [empConfigLoading, setEmpConfigLoading] = useState(true)
+  const [empPasswordValue, setEmpPasswordValue] = useState('')
+  const [empToggleSaving, setEmpToggleSaving] = useState(false)
+  const [empToggleMsg, setEmpToggleMsg] = useState('')
+
+  // Reset password modal
   const [resetTarget, setResetTarget] = useState<UserRow | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -892,6 +901,13 @@ function AccountManagementPanel() {
   const [modalError, setModalError] = useState('')
   const [modalSuccess, setModalSuccess] = useState('')
 
+  // Create employee form
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({ full_name: '', username: '', password: '' })
+  const [createSaving, setCreateSaving] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const [createSuccess, setCreateSuccess] = useState('')
+
   const load = useCallback(async () => {
     setLoading(true)
     const res = await fetch('/api/admin/users')
@@ -900,38 +916,48 @@ function AccountManagementPanel() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    fetch('/api/admin/employee-login-config')
+      .then(r => r.json())
+      .then(d => { setEmpRequirePassword(d.requirePassword ?? false); setEmpConfigLoading(false) })
+      .catch(() => setEmpConfigLoading(false))
+  }, [load])
+
+  async function saveEmpConfig(enabled: boolean) {
+    setEmpToggleSaving(true); setEmpToggleMsg('')
+    const res = await fetch('/api/admin/employee-login-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requirePassword: enabled, newPassword: enabled ? empPasswordValue : undefined }),
+    })
+    const data = await res.json()
+    setEmpToggleSaving(false)
+    if (!res.ok) { setEmpToggleMsg(data.error ?? 'Failed to save'); return }
+    setEmpRequirePassword(enabled)
+    setEmpPasswordValue('')
+    setEmpToggleMsg(enabled ? 'Password required — saved.' : 'One-tap login enabled.')
+    setTimeout(() => setEmpToggleMsg(''), 3000)
+  }
 
   function openReset(user: UserRow) {
     setResetTarget(user)
     setNewPassword(''); setConfirmPassword(''); setPasswordHint('')
     setAdminPassword(''); setModalError(''); setModalSuccess('')
   }
-
   function closeReset() { setResetTarget(null) }
 
   async function handleReset() {
     setModalError(''); setModalSuccess('')
-    if (!newPassword || !confirmPassword || !adminPassword) {
-      setModalError('All fields are required.'); return
-    }
-    if (newPassword !== confirmPassword) {
-      setModalError('Passwords do not match.'); return
-    }
-    if (newPassword.length < 6) {
-      setModalError('Password must be at least 6 characters.'); return
-    }
+    if (!newPassword || !confirmPassword || !adminPassword) { setModalError('All fields are required.'); return }
+    if (newPassword !== confirmPassword) { setModalError('Passwords do not match.'); return }
+    if (newPassword.length < 6) { setModalError('Password must be at least 6 characters.'); return }
     setSaving(true)
     try {
       const res = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUserId: resetTarget!.id,
-          newPassword,
-          confirmAdminPassword: adminPassword,
-          passwordHint: passwordHint || null,
-        }),
+        body: JSON.stringify({ targetUserId: resetTarget!.id, newPassword, confirmAdminPassword: adminPassword, passwordHint: passwordHint || null }),
       })
       const data = await res.json()
       if (!res.ok) { setModalError(data.error ?? 'Reset failed.'); return }
@@ -942,35 +968,162 @@ function AccountManagementPanel() {
     finally { setSaving(false) }
   }
 
-  return (
-    <div>
-      <PanelTitle>Account Management</PanelTitle>
-      <p className="mb-5 text-sm text-gray-500">Admin-only. Reset passwords and manage user access.</p>
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault(); setCreateError(''); setCreateSuccess('')
+    if (!createForm.full_name || !createForm.username || !createForm.password) { setCreateError('All fields are required.'); return }
+    setCreateSaving(true)
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...createForm, role: 'employee' }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setCreateError(data.error ?? 'Failed to create user.'); return }
+      setCreateSuccess('Employee profile created.')
+      setCreateForm({ full_name: '', username: '', password: '' })
+      setShowCreate(false)
+      load()
+    } catch { setCreateError('Network error.') }
+    finally { setCreateSaving(false) }
+  }
 
-      {loading ? (
-        <p className="text-sm text-gray-400">Loading users…</p>
-      ) : (
-        <div className="space-y-2">
-          {users.map((u) => (
-            <div key={u.id} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">{u.full_name ?? u.username}</p>
-                <p className="text-xs text-gray-400">
-                  @{u.username} · <span className="capitalize">{u.role}</span>
-                  {!u.is_active && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">Inactive</span>}
-                </p>
-              </div>
-              <button onClick={() => openReset(u)}
-                className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
-                style={{ borderColor: '#B8922A', color: '#B8922A' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
-                Reset Password
-              </button>
-            </div>
-          ))}
+  return (
+    <div className="space-y-8">
+      <div>
+        <PanelTitle>Account Management</PanelTitle>
+        <p className="mb-0 text-sm text-gray-500">Reset passwords and manage user access.</p>
+      </div>
+
+      {/* ── Employee Login Toggle ── */}
+      <section className="rounded-2xl border border-gray-100 bg-white p-5">
+        <div className="mb-1 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Employee Login Password</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {empRequirePassword ? 'Employees must enter a password to sign in.' : 'One-tap — no password needed.'}
+            </p>
+          </div>
+          {empConfigLoading ? (
+            <span className="text-xs text-gray-400">Loading…</span>
+          ) : (
+            <button
+              onClick={() => {
+                if (empRequirePassword) { saveEmpConfig(false) }
+                else { setEmpPasswordValue(''); setEmpToggleMsg('') }
+              }}
+              className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
+              style={{ backgroundColor: empRequirePassword ? '#B8922A' : '#d1d5db' }}
+              role="switch"
+              aria-checked={empRequirePassword}>
+              <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ${empRequirePassword ? 'translate-x-5' : 'translate-x-0'}`} />
+            </button>
+          )}
         </div>
-      )}
+
+        {!empRequirePassword && !empConfigLoading && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Set Employee Password <span className="text-red-500">*</span></label>
+              <PasswordInput value={empPasswordValue} onChange={setEmpPasswordValue} placeholder="Min. 6 characters" autoComplete="new-password" />
+            </div>
+            <button
+              onClick={() => saveEmpConfig(true)}
+              disabled={empToggleSaving || empPasswordValue.length < 6}
+              className="rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor: '#B8922A' }}>
+              {empToggleSaving ? 'Saving…' : 'Enable & Save Password'}
+            </button>
+          </div>
+        )}
+
+        {empRequirePassword && !empConfigLoading && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Update Employee Password</label>
+              <PasswordInput value={empPasswordValue} onChange={setEmpPasswordValue} placeholder="New password (min. 6 chars)" autoComplete="new-password" />
+            </div>
+            <button
+              onClick={() => saveEmpConfig(true)}
+              disabled={empToggleSaving || empPasswordValue.length < 6}
+              className="rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor: '#B8922A' }}>
+              {empToggleSaving ? 'Saving…' : 'Update Password'}
+            </button>
+          </div>
+        )}
+
+        {empToggleMsg && (
+          <p className="mt-2 text-xs font-medium" style={{ color: empToggleMsg.includes('Failed') ? '#ef4444' : '#16a34a' }}>{empToggleMsg}</p>
+        )}
+      </section>
+
+      {/* ── User List ── */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-semibold text-gray-800">User Accounts</p>
+          <button
+            onClick={() => { setShowCreate(v => !v); setCreateError(''); setCreateSuccess('') }}
+            className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+            style={{ backgroundColor: '#B8922A' }}>
+            {showCreate ? 'Cancel' : '+ Create Employee'}
+          </button>
+        </div>
+
+        {showCreate && (
+          <form onSubmit={handleCreate} className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#B8922A' }}>New Employee Profile</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-gray-600">Full Name <span className="text-red-500">*</span></label>
+                <input type="text" value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))}
+                  placeholder="Juan dela Cruz" className={inputCls} />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-gray-600">Username <span className="text-red-500">*</span></label>
+                <input type="text" value={createForm.username} onChange={e => setCreateForm(f => ({ ...f, username: e.target.value }))}
+                  placeholder="juan" className={inputCls} autoCapitalize="none" />
+              </div>
+              <div className="col-span-2">
+                <label className="mb-1 block text-xs font-medium text-gray-600">Password <span className="text-red-500">*</span></label>
+                <PasswordInput value={createForm.password} onChange={v => setCreateForm(f => ({ ...f, password: v }))} autoComplete="new-password" />
+              </div>
+            </div>
+            {createError && <p className="text-sm text-red-600">{createError}</p>}
+            {createSuccess && <p className="text-sm font-medium text-green-700">{createSuccess}</p>}
+            <button type="submit" disabled={createSaving}
+              className="w-full rounded-xl py-2.5 text-sm font-bold text-white disabled:opacity-60 sm:w-auto sm:px-6"
+              style={{ backgroundColor: '#B8922A' }}>
+              {createSaving ? 'Creating…' : 'Create Profile'}
+            </button>
+          </form>
+        )}
+
+        {loading ? (
+          <p className="text-sm text-gray-400">Loading users…</p>
+        ) : (
+          <div className="space-y-2">
+            {users.filter(u => u.username !== 'employee').map((u) => (
+              <div key={u.id} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">{u.full_name ?? u.username}</p>
+                  <p className="text-xs text-gray-400">
+                    @{u.username} · <span className="capitalize">{u.role}</span>
+                    {!u.is_active && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">Inactive</span>}
+                  </p>
+                </div>
+                <button onClick={() => openReset(u)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+                  style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
+                  Reset Password
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Reset Modal */}
       {resetTarget && (
@@ -983,7 +1136,6 @@ function AccountManagementPanel() {
               </div>
               <button onClick={closeReset} className="text-sm text-gray-400 hover:text-gray-600">✕</button>
             </div>
-
             <div className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">New Password</label>
@@ -994,27 +1146,17 @@ function AccountManagementPanel() {
                 <PasswordInput value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">
-                  Password Hint <span className="font-normal text-gray-400">(optional — plain text reminder, not the password)</span>
-                </label>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Password Hint <span className="font-normal text-gray-400">(optional)</span></label>
                 <input type="text" value={passwordHint} onChange={(e) => setPasswordHint(e.target.value)}
                   placeholder="e.g. pet name + birth year" className={inputCls} />
               </div>
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <label className="mb-1 block text-xs font-semibold text-amber-800">
-                  Your Admin Password <span className="font-normal">(required to confirm)</span>
-                </label>
+                <label className="mb-1 block text-xs font-semibold text-amber-800">Your Admin Password <span className="font-normal">(required to confirm)</span></label>
                 <PasswordInput value={adminPassword} onChange={setAdminPassword} placeholder="Your current password" autoComplete="current-password" />
               </div>
             </div>
-
-            {modalError && (
-              <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-600">{modalError}</p>
-            )}
-            {modalSuccess && (
-              <p className="mt-3 rounded-xl bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700">{modalSuccess}</p>
-            )}
-
+            {modalError && <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-600">{modalError}</p>}
+            {modalSuccess && <p className="mt-3 rounded-xl bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700">{modalSuccess}</p>}
             <div className="mt-5 flex gap-3">
               <button onClick={handleReset} disabled={saving}
                 className="flex-1 rounded-xl py-3 text-sm font-bold text-white disabled:opacity-60"
