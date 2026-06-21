@@ -133,7 +133,7 @@ function LoginForm() {
           </button>
           {hint && (
             <p className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: 'rgba(184,146,42,0.1)', color: '#EDD98A' }}>
-              💡 {hint}
+              {hint}
             </p>
           )}
           {hintError && (
@@ -162,20 +162,87 @@ function LoginForm() {
   )
 }
 
+function RoleSelect({ onSelect }: { onSelect: (role: 'employee' | 'admin') => void }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <button
+        onClick={() => onSelect('employee')}
+        className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95"
+        style={{ borderColor: '#2a2a2a', backgroundColor: '#1a1a1a' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a2a' }}
+      >
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: '#222' }}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B8922A" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div>
+          <p className="font-bold text-white">Employee</p>
+          <p className="text-xs" style={{ color: '#666' }}>Check-in and queue access</p>
+        </div>
+      </button>
+
+      <button
+        onClick={() => onSelect('admin')}
+        className="group flex items-center gap-4 rounded-2xl border-2 p-5 text-left transition-all active:scale-95"
+        style={{ borderColor: '#2a2a2a', backgroundColor: '#1a1a1a' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#B8922A' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a2a' }}
+      >
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: '#222' }}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B8922A" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <div>
+          <p className="font-bold text-white">Admin</p>
+          <p className="text-xs" style={{ color: '#666' }}>Full access — dashboard, reports, settings</p>
+        </div>
+      </button>
+    </div>
+  )
+}
+
 export default function LoginPage() {
+  const [selectedRole, setSelectedRole] = useState<'employee' | 'admin' | null>(null)
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4" style={{ backgroundColor: '#0a0a0a' }}>
       <div className="mb-8 flex flex-col items-center gap-3">
         <Image src="/Full_White Grad_No BG.svg" alt="Primera Auto Studio" width={160} height={70} priority className="h-auto w-[160px]" />
         <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: '#EDD98A' }}>Primera Auto Studio</p>
       </div>
+
       <div className="w-full max-w-sm rounded-2xl p-8" style={{ backgroundColor: '#111', border: '1px solid #222' }}>
-        <h1 className="mb-1 text-xl font-bold text-white">Sign in</h1>
-        <p className="mb-6 text-sm" style={{ color: '#666' }}>Enter your credentials to continue</p>
-        <Suspense fallback={null}>
-          <LoginForm />
-        </Suspense>
+        {!selectedRole ? (
+          <>
+            <h1 className="mb-1 text-xl font-bold text-white">Welcome</h1>
+            <p className="mb-6 text-sm" style={{ color: '#666' }}>How are you signing in?</p>
+            <RoleSelect onSelect={setSelectedRole} />
+          </>
+        ) : (
+          <>
+            <div className="mb-5 flex items-center gap-3">
+              <button
+                onClick={() => setSelectedRole(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors"
+                style={{ backgroundColor: '#1a1a1a', color: '#888' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#B8922A' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#888' }}
+              >
+                ←
+              </button>
+              <div>
+                <h1 className="text-xl font-bold text-white">
+                  {selectedRole === 'admin' ? 'Admin Sign In' : 'Employee Sign In'}
+                </h1>
+                <p className="text-xs" style={{ color: '#666' }}>Enter your credentials</p>
+              </div>
+            </div>
+            <Suspense fallback={null}>
+              <LoginForm />
+            </Suspense>
+          </>
+        )}
       </div>
+
       <p className="mt-8 text-[10px] uppercase tracking-widest" style={{ color: '#333' }}>Auto Studio POS · Private Access</p>
     </div>
   )
