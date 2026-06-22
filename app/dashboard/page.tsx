@@ -129,6 +129,8 @@ export default function DashboardPage() {
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
   const [activeTab, setActiveTab]       = useState<Record<string, DropdownTab>>({})
   const [lbView, setLbView]             = useState<LeaderboardView>('carwashes')
+  const [tooltipPos, setTooltipPos]     = useState<{ x: number; y: number } | null>(null)
+  const [tooltipContent, setTooltipContent] = useState<{ dateStr: string; valueLine: string } | null>(null)
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
     if (typeof window === 'undefined') return DEFAULT_SECTION_ORDER
     try {
@@ -382,9 +384,6 @@ export default function DashboardPage() {
   const BAR_H   = 100
   const LABEL_H = 20
   const TOP_PAD = 36
-
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
-  const [tooltipContent, setTooltipContent] = useState<{ dateStr: string; valueLine: string } | null>(null)
 
   function onBarEnter(e: React.MouseEvent, dateStr: string, valueLine: string) {
     setTooltipPos({ x: e.clientX, y: e.clientY })
