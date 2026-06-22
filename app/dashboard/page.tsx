@@ -73,6 +73,18 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 sm:mb-4">{children}</h2>
 }
 
+function BarTooltip({ x, y, dateStr, valueLine }: { x: number; y: number; dateStr: string; valueLine: string }) {
+  const d = new Date(dateStr + 'T00:00:00')
+  return (
+    <div className="pointer-events-none fixed z-50 whitespace-nowrap rounded-xl bg-gray-900 px-3 py-2 text-xs text-white shadow-xl"
+      style={{ left: x + 14, top: y - 60 }}>
+      <div className="font-semibold">{d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</div>
+      <div style={{ color: '#9ca3af' }}>{d.toLocaleDateString('en-PH', { weekday: 'long' })}</div>
+      <div className="mt-0.5 font-bold" style={{ color: '#EDD98A' }}>{valueLine}</div>
+    </div>
+  )
+}
+
 const DEFAULT_SECTION_ORDER = ['live', 'summary', 'revenue', 'cars', 'leaderboard', 'services-payment']
 const LS_KEY = 'dashboard-section-order'
 
@@ -778,17 +790,9 @@ export default function DashboardPage() {
   return (
     <div className="px-3 py-4 sm:px-6 sm:py-6">
       {/* Global bar-chart tooltip — fixed so it escapes all overflow clipping */}
-      {tooltipPos && tooltipContent && (() => {
-        const d = new Date(tooltipContent.dateStr + 'T00:00:00')
-        return (
-          <div className="pointer-events-none fixed z-50 whitespace-nowrap rounded-xl bg-gray-900 px-3 py-2 text-xs text-white shadow-xl"
-            style={{ left: tooltipPos.x + 14, top: tooltipPos.y - 60 }}>
-            <div className="font-semibold">{d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</div>
-            <div style={{ color: '#9ca3af' }}>{d.toLocaleDateString('en-PH', { weekday: 'long' })}</div>
-            <div className="mt-0.5 font-bold" style={{ color: '#EDD98A' }}>{tooltipContent.valueLine}</div>
-          </div>
-        )
-      })()}
+      {tooltipPos && tooltipContent && (
+        <BarTooltip x={tooltipPos.x} y={tooltipPos.y} dateStr={tooltipContent.dateStr} valueLine={tooltipContent.valueLine} />
+      )}
       <div className="mx-auto max-w-5xl">
 
         {/* Header */}
