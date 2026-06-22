@@ -73,7 +73,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400 sm:mb-4">{children}</h2>
 }
 
-const DEFAULT_SECTION_ORDER = ['live', 'summary', 'revenue', 'leaderboard', 'services-payment']
+const DEFAULT_SECTION_ORDER = ['live', 'summary', 'revenue', 'cars', 'leaderboard', 'services-payment']
 const LS_KEY = 'dashboard-section-order'
 
 function SortableSection({ id, children }: { id: string; children: React.ReactNode }) {
@@ -119,7 +119,12 @@ export default function DashboardPage() {
   const [lbView, setLbView]             = useState<LeaderboardView>('carwashes')
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
     if (typeof window === 'undefined') return DEFAULT_SECTION_ORDER
-    try { return JSON.parse(localStorage.getItem(LS_KEY) ?? 'null') ?? DEFAULT_SECTION_ORDER } catch { return DEFAULT_SECTION_ORDER }
+    try {
+      const saved: string[] = JSON.parse(localStorage.getItem(LS_KEY) ?? 'null') ?? []
+      if (!saved.length) return DEFAULT_SECTION_ORDER
+      const newSections = DEFAULT_SECTION_ORDER.filter((id) => !saved.includes(id))
+      return [...saved, ...newSections]
+    } catch { return DEFAULT_SECTION_ORDER }
   })
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -159,26 +164,32 @@ export default function DashboardPage() {
   })
   const liveTopServices = Object.entries(liveSvcMap).sort((a, b) => b[1] - a[1]).slice(0, 3)
 
-  useEffect(() => {
+  const fetchRangeData = useCallback(async () => {
     if (!range.from || !range.to) return
-    async function load() {
-      setLoading(true)
-      const [{ data: txR }, { data: st }, { data: sp }, { data: expR }] = await Promise.all([
-        supabase.from('transactions')
-          .select('date, price, status, service_name, payment_method, team, size_category')
-          .gte('date', range.from).lte('date', range.to),
-        supabase.from('settings').select('teams').eq('id', '1').single(),
-        supabase.from('service_prices').select('service_name, size_category, price'),
-        supabase.from('expenses').select('amount').gte('date', range.from).lte('date', range.to).neq('is_deleted', true),
-      ])
-      setTxRange(txR ?? [])
-      if (st?.teams) setTeams(st.teams)
-      if (sp) setServicePrices(sp)
-      setTotalExpenses((expR ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
-      setLoading(false)
-    }
-    load()
+    setLoading(true)
+    const [{ data: txR }, { data: st }, { data: sp }, { data: expR }] = await Promise.all([
+      supabase.from('transactions')
+        .select('date, price, status, service_name, payment_method, team, size_category')
+        .gte('date', range.from).lte('date', range.to),
+      supabase.from('settings').select('teams').eq('id', '1').single(),
+      supabase.from('service_prices').select('service_name, size_category, price'),
+      supabase.from('expenses').select('amount').gte('date', range.from).lte('date', range.to).neq('is_deleted', true),
+    ])
+    setTxRange(txR ?? [])
+    if (st?.teams) setTeams(st.teams)
+    if (sp) setServicePrices(sp)
+    setTotalExpenses((expR ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
+    setLoading(false)
   }, [range])
+
+  useEffect(() => { fetchRangeData() }, [fetchRangeData])
+
+  useEffect(() => {
+    const channel = supabase.channel('dashboard-expenses')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { fetchRangeData() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchRangeData])
 
   function priceFor(svcName: string, sizeCat: string): number {
     return servicePrices.find((sp) => sp.service_name === svcName && sp.size_category === sizeCat)?.price ?? 0
@@ -356,10 +367,12 @@ export default function DashboardPage() {
     </section>
   )
 
+  const BAR_H = 100
+  const LABEL_H = 18
+
   const sectionRevenue = (
     <section>
           <SectionTitle>Revenue by Day</SectionTitle>
-          {/* 1-col on mobile, 3-col on desktop */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 mb-3 sm:mb-4">
             <StatCard label="Total Cars"    value={String(totalCars)} />
             <StatCard label="Total Revenue" value={formatPHP(totalRevenue)} accent />
@@ -370,28 +383,77 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
             <div className="overflow-x-auto">
-              <div className="flex items-end gap-[3px]"
-                style={{ height: '120px', paddingTop: '28px', minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
+              <div className="flex gap-[3px]"
+                style={{ height: BAR_H + LABEL_H, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
-                  const rev       = chartRevenue[i]
-                  const isToday   = dateStr === todayStr
-                  const heightPct = rev > 0 ? Math.max((rev / maxRevenue) * 100, 5) : 0
-                  const dayNum    = parseInt(dateStr.split('-')[2], 10)
+                  const rev     = chartRevenue[i]
+                  const isToday = dateStr === todayStr
+                  const barPx   = rev > 0 ? Math.max((rev / maxRevenue) * BAR_H, 4) : 2
+                  const dayNum  = parseInt(dateStr.split('-')[2], 10)
                   const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
                   return (
-                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center" style={{ minWidth: '14px' }}>
+                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center"
+                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}>
                       {rev > 0 && (
-                        <div className="pointer-events-none absolute bottom-full mb-1 hidden whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white group-hover:block z-10">
+                        <div className="pointer-events-none absolute hidden group-hover:block whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white z-10"
+                          style={{ bottom: LABEL_H + barPx + 4, left: '50%', transform: 'translateX(-50%)' }}>
                           {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {formatPHP(rev)}
                         </div>
                       )}
-                      <span className="absolute text-[8px] font-semibold whitespace-nowrap"
-                        style={{ bottom: '18px', color: '#0a0a0a', transform: 'translateX(-50%)', left: '50%' }}>
-                        {rev > 0 ? '₱' + Math.round(rev / 1000).toLocaleString() + 'k' : ''}
+                      {rev > 0 && (
+                        <span className="absolute text-[8px] font-semibold whitespace-nowrap"
+                          style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
+                          {'₱' + Math.round(rev / 1000) + 'k'}
+                        </span>
+                      )}
+                      <div className="absolute w-full rounded-t"
+                        style={{ bottom: LABEL_H, height: barPx, backgroundColor: isToday ? '#B8922A' : rev > 0 ? '#EDD98A' : '#f3f4f6' }} />
+                      <span className="absolute bottom-0 text-[9px]"
+                        style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
+                        {showLabel ? dayNum : ''}
                       </span>
-                      <div className="w-full rounded-t"
-                        style={{ height: rev === 0 ? '2px' : `${heightPct}%`, backgroundColor: isToday ? '#B8922A' : rev > 0 ? '#EDD98A' : '#f3f4f6' }} />
-                      <span className="mt-1 text-[9px]"
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+    </section>
+  )
+
+  const maxCars = Math.max(...chartCars, 1)
+
+  const sectionCars = (
+    <section>
+          <SectionTitle>Cars per Day</SectionTitle>
+          <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
+            <div className="overflow-x-auto">
+              <div className="flex gap-[3px]"
+                style={{ height: BAR_H + LABEL_H, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
+                {rangeDates.map((dateStr, i) => {
+                  const cars    = chartCars[i]
+                  const isToday = dateStr === todayStr
+                  const barPx   = cars > 0 ? Math.max((cars / maxCars) * BAR_H, 4) : 2
+                  const dayNum  = parseInt(dateStr.split('-')[2], 10)
+                  const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
+                  return (
+                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center"
+                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}>
+                      {cars > 0 && (
+                        <div className="pointer-events-none absolute hidden group-hover:block whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white z-10"
+                          style={{ bottom: LABEL_H + barPx + 4, left: '50%', transform: 'translateX(-50%)' }}>
+                          {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {cars} car{cars !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                      {cars > 0 && (
+                        <span className="absolute text-[8px] font-semibold whitespace-nowrap"
+                          style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
+                          {cars}
+                        </span>
+                      )}
+                      <div className="absolute w-full rounded-t"
+                        style={{ bottom: LABEL_H, height: barPx, backgroundColor: isToday ? '#B8922A' : cars > 0 ? '#EDD98A' : '#f3f4f6' }} />
+                      <span className="absolute bottom-0 text-[9px]"
                         style={{ color: isToday ? '#B8922A' : '#9ca3af', fontWeight: isToday ? 700 : 400 }}>
                         {showLabel ? dayNum : ''}
                       </span>
@@ -696,10 +758,11 @@ export default function DashboardPage() {
   )
 
   const sectionMap: Record<string, React.ReactNode> = {
-    live:             sectionLive,
-    summary:          sectionSummary,
-    revenue:          sectionRevenue,
-    leaderboard:      sectionLeaderboard,
+    live:               sectionLive,
+    summary:            sectionSummary,
+    revenue:            sectionRevenue,
+    cars:               sectionCars,
+    leaderboard:        sectionLeaderboard,
     'services-payment': sectionServicesPayment,
   }
 

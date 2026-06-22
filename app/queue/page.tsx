@@ -37,6 +37,7 @@ interface SizeRow          { size_category: string; base_price: number }
 interface PaymentMethodRow { name: string }
 
 interface EditState {
+  plate_number: string
   size_category: string
   selectedServices: string[]
   manualPrice: string
@@ -114,7 +115,7 @@ export default function QueuePage() {
   const [loading, setLoading]     = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editState, setEditState] = useState<EditState>({
-    size_category: '', selectedServices: [], manualPrice: '', payment_method: '',
+    plate_number: '', size_category: '', selectedServices: [], manualPrice: '', payment_method: '',
     status: '', notes: '', time_in: '', team: '', make: '', model: '',
   })
   const [visitCounts, setVisitCounts] = useState<Record<string, number>>({})
@@ -264,6 +265,13 @@ export default function QueuePage() {
     }
   }, [fetchRows, range.preset])
 
+  useEffect(() => {
+    const channel = supabase.channel('queue-expenses')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { fetchRows() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchRows])
+
   const totalCars    = rows.length
   const totalRevenue = rows.reduce((s, r) => s + r.price, 0)
   const onHandTotal  = rows.filter((r) => r.status === 'On Hand').reduce((s, r) => s + r.price, 0)
@@ -296,6 +304,7 @@ export default function QueuePage() {
   function startEdit(row: Transaction) {
     setEditingId(row.id)
     setEditState({
+      plate_number:     row.plate_number,
       size_category:    row.size_category,
       selectedServices: parseServiceNames(row.service_name),
       manualPrice: '', payment_method: row.payment_method,
@@ -340,7 +349,9 @@ export default function QueuePage() {
   async function saveEdit(id: string) {
     setSaving(true); setSaveError('')
     const serviceLabel = editState.selectedServices.join(', ')
+    const cleanPlate = editState.plate_number.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     const { error } = await supabase.from('transactions').update({
+      plate_number: cleanPlate,
       size_category: editState.size_category, service_name: serviceLabel,
       price: effectivePrice, payment_method: editState.payment_method,
       status: editState.status, notes: editState.notes,
@@ -350,10 +361,10 @@ export default function QueuePage() {
     setSaving(false)
     if (error) { setSaveError(error.message); return }
     setRows((prev) => prev.map((r) =>
-      r.id === id ? { ...r, size_category: editState.size_category, service_name: serviceLabel,
-        price: effectivePrice, payment_method: editState.payment_method, status: editState.status,
-        notes: editState.notes, time_in: editState.time_in, team: editState.team || null,
-        make: editState.make || null, model: editState.model || null } : r
+      r.id === id ? { ...r, plate_number: cleanPlate, size_category: editState.size_category,
+        service_name: serviceLabel, price: effectivePrice, payment_method: editState.payment_method,
+        status: editState.status, notes: editState.notes, time_in: editState.time_in,
+        team: editState.team || null, make: editState.make || null, model: editState.model || null } : r
     ))
     setEditingId(null)
   }
@@ -424,6 +435,20 @@ export default function QueuePage() {
           {editRow.make || editRow.model ? ` · ${[editRow.make, editRow.model].filter(Boolean).join(' ')}` : ''}
         </p>
         <button onClick={cancelEdit} className="text-xs font-medium text-gray-500 hover:text-gray-700">✕ Cancel</button>
+      </div>
+
+      {/* Plate Number */}
+      <div className="mb-4">
+        <label className="mb-1 block text-xs font-medium text-gray-500">Plate Number</label>
+        <input
+          type="text"
+          value={editState.plate_number}
+          onChange={(e) => setEditState((s) => ({ ...s, plate_number: e.target.value.replace(/[^A-Z0-9]/gi, '').toUpperCase() }))}
+          onBlur={(e) => setEditState((s) => ({ ...s, plate_number: e.target.value.replace(/[^A-Z0-9]/gi, '').toUpperCase() }))}
+          placeholder="e.g. ABC1234"
+          className={fullInputCls}
+          maxLength={10}
+        />
       </div>
 
       {/* Make & Model */}
