@@ -117,8 +117,6 @@ export default function DashboardPage() {
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
   const [activeTab, setActiveTab]       = useState<Record<string, DropdownTab>>({})
   const [lbView, setLbView]             = useState<LeaderboardView>('carwashes')
-  const [revHoverIdx, setRevHoverIdx]   = useState<number | null>(null)
-  const [carsHoverIdx, setCarsHoverIdx] = useState<number | null>(null)
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
     if (typeof window === 'undefined') return DEFAULT_SECTION_ORDER
     try {
@@ -373,18 +371,18 @@ export default function DashboardPage() {
   const LABEL_H = 20
   const TOP_PAD = 36
 
-  function barTooltip(dateStr: string, valueLine: string) {
-    const d = new Date(dateStr + 'T00:00:00')
-    const dateLine = d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
-    const dayLine  = d.toLocaleDateString('en-PH', { weekday: 'long' })
-    return (
-      <div className="pointer-events-none absolute z-20 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs text-white shadow-lg"
-        style={{ bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: 4 }}>
-        <div className="font-semibold">{dateLine}</div>
-        <div style={{ color: '#9ca3af' }}>{dayLine}</div>
-        <div className="mt-0.5 font-bold" style={{ color: '#EDD98A' }}>{valueLine}</div>
-      </div>
-    )
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
+  const [tooltipContent, setTooltipContent] = useState<{ dateStr: string; valueLine: string } | null>(null)
+
+  function onBarEnter(e: React.MouseEvent, dateStr: string, valueLine: string) {
+    setTooltipPos({ x: e.clientX, y: e.clientY })
+    setTooltipContent({ dateStr, valueLine })
+  }
+  function onBarMove(e: React.MouseEvent) {
+    setTooltipPos({ x: e.clientX, y: e.clientY })
+  }
+  function onBarLeave() {
+    setTooltipPos(null); setTooltipContent(null)
   }
 
   const sectionRevenue = (
@@ -399,7 +397,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
-            <div className="overflow-x-auto">
+            <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
               <div className="flex items-end gap-[3px]"
                 style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
@@ -411,9 +409,9 @@ export default function DashboardPage() {
                   return (
                     <div key={dateStr} className="relative flex flex-1 flex-col items-center"
                       style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}
-                      onMouseEnter={() => setRevHoverIdx(i)}
-                      onMouseLeave={() => setRevHoverIdx(null)}>
-                      {revHoverIdx === i && barTooltip(dateStr, formatPHP(rev))}
+                      onMouseEnter={(e) => onBarEnter(e, dateStr, formatPHP(rev))}
+                      onMouseMove={onBarMove}
+                      onMouseLeave={onBarLeave}>
                       {rev > 0 && (
                         <span className="absolute text-[8px] font-semibold whitespace-nowrap"
                           style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
@@ -441,7 +439,7 @@ export default function DashboardPage() {
     <section>
           <SectionTitle>Cars per Day</SectionTitle>
           <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
-            <div className="overflow-x-auto">
+            <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
               <div className="flex items-end gap-[3px]"
                 style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
@@ -453,9 +451,9 @@ export default function DashboardPage() {
                   return (
                     <div key={dateStr} className="relative flex flex-1 flex-col items-center"
                       style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}
-                      onMouseEnter={() => setCarsHoverIdx(i)}
-                      onMouseLeave={() => setCarsHoverIdx(null)}>
-                      {carsHoverIdx === i && barTooltip(dateStr, `${cars} car${cars !== 1 ? 's' : ''}`)}
+                      onMouseEnter={(e) => onBarEnter(e, dateStr, `${cars} car${cars !== 1 ? 's' : ''}`)}
+                      onMouseMove={onBarMove}
+                      onMouseLeave={onBarLeave}>
                       {cars > 0 && (
                         <span className="absolute text-[8px] font-semibold whitespace-nowrap"
                           style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
@@ -779,6 +777,18 @@ export default function DashboardPage() {
 
   return (
     <div className="px-3 py-4 sm:px-6 sm:py-6">
+      {/* Global bar-chart tooltip — fixed so it escapes all overflow clipping */}
+      {tooltipPos && tooltipContent && (() => {
+        const d = new Date(tooltipContent.dateStr + 'T00:00:00')
+        return (
+          <div className="pointer-events-none fixed z-50 whitespace-nowrap rounded-xl bg-gray-900 px-3 py-2 text-xs text-white shadow-xl"
+            style={{ left: tooltipPos.x + 14, top: tooltipPos.y - 60 }}>
+            <div className="font-semibold">{d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</div>
+            <div style={{ color: '#9ca3af' }}>{d.toLocaleDateString('en-PH', { weekday: 'long' })}</div>
+            <div className="mt-0.5 font-bold" style={{ color: '#EDD98A' }}>{tooltipContent.valueLine}</div>
+          </div>
+        )
+      })()}
       <div className="mx-auto max-w-5xl">
 
         {/* Header */}
