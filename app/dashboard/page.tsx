@@ -117,6 +117,8 @@ export default function DashboardPage() {
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
   const [activeTab, setActiveTab]       = useState<Record<string, DropdownTab>>({})
   const [lbView, setLbView]             = useState<LeaderboardView>('carwashes')
+  const [revHoverIdx, setRevHoverIdx]   = useState<number | null>(null)
+  const [carsHoverIdx, setCarsHoverIdx] = useState<number | null>(null)
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => {
     if (typeof window === 'undefined') return DEFAULT_SECTION_ORDER
     try {
@@ -367,8 +369,23 @@ export default function DashboardPage() {
     </section>
   )
 
-  const BAR_H = 100
-  const LABEL_H = 18
+  const BAR_H   = 100
+  const LABEL_H = 20
+  const TOP_PAD = 36
+
+  function barTooltip(dateStr: string, valueLine: string) {
+    const d = new Date(dateStr + 'T00:00:00')
+    const dateLine = d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
+    const dayLine  = d.toLocaleDateString('en-PH', { weekday: 'long' })
+    return (
+      <div className="pointer-events-none absolute z-20 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs text-white shadow-lg"
+        style={{ bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: 4 }}>
+        <div className="font-semibold">{dateLine}</div>
+        <div style={{ color: '#9ca3af' }}>{dayLine}</div>
+        <div className="mt-0.5 font-bold" style={{ color: '#EDD98A' }}>{valueLine}</div>
+      </div>
+    )
+  }
 
   const sectionRevenue = (
     <section>
@@ -383,8 +400,8 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
             <div className="overflow-x-auto">
-              <div className="flex gap-[3px]"
-                style={{ height: BAR_H + LABEL_H, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
+              <div className="flex items-end gap-[3px]"
+                style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
                   const rev     = chartRevenue[i]
                   const isToday = dateStr === todayStr
@@ -392,14 +409,11 @@ export default function DashboardPage() {
                   const dayNum  = parseInt(dateStr.split('-')[2], 10)
                   const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
                   return (
-                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center"
-                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}>
-                      {rev > 0 && (
-                        <div className="pointer-events-none absolute hidden group-hover:block whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white z-10"
-                          style={{ bottom: LABEL_H + barPx + 4, left: '50%', transform: 'translateX(-50%)' }}>
-                          {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {formatPHP(rev)}
-                        </div>
-                      )}
+                    <div key={dateStr} className="relative flex flex-1 flex-col items-center"
+                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}
+                      onMouseEnter={() => setRevHoverIdx(i)}
+                      onMouseLeave={() => setRevHoverIdx(null)}>
+                      {revHoverIdx === i && barTooltip(dateStr, formatPHP(rev))}
                       {rev > 0 && (
                         <span className="absolute text-[8px] font-semibold whitespace-nowrap"
                           style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>
@@ -428,8 +442,8 @@ export default function DashboardPage() {
           <SectionTitle>Cars per Day</SectionTitle>
           <div className="rounded-2xl bg-white p-3 shadow-sm sm:p-5">
             <div className="overflow-x-auto">
-              <div className="flex gap-[3px]"
-                style={{ height: BAR_H + LABEL_H, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
+              <div className="flex items-end gap-[3px]"
+                style={{ height: BAR_H + TOP_PAD + LABEL_H, paddingTop: TOP_PAD, minWidth: rangeDates.length > 7 ? `${rangeDates.length * 18}px` : 'auto' }}>
                 {rangeDates.map((dateStr, i) => {
                   const cars    = chartCars[i]
                   const isToday = dateStr === todayStr
@@ -437,14 +451,11 @@ export default function DashboardPage() {
                   const dayNum  = parseInt(dateStr.split('-')[2], 10)
                   const showLabel = i === 0 || i === rangeDates.length - 1 || i % labelStep === 0
                   return (
-                    <div key={dateStr} className="group relative flex flex-1 flex-col items-center"
-                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}>
-                      {cars > 0 && (
-                        <div className="pointer-events-none absolute hidden group-hover:block whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white z-10"
-                          style={{ bottom: LABEL_H + barPx + 4, left: '50%', transform: 'translateX(-50%)' }}>
-                          {new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} — {cars} car{cars !== 1 ? 's' : ''}
-                        </div>
-                      )}
+                    <div key={dateStr} className="relative flex flex-1 flex-col items-center"
+                      style={{ height: BAR_H + LABEL_H, minWidth: '14px' }}
+                      onMouseEnter={() => setCarsHoverIdx(i)}
+                      onMouseLeave={() => setCarsHoverIdx(null)}>
+                      {carsHoverIdx === i && barTooltip(dateStr, `${cars} car${cars !== 1 ? 's' : ''}`)}
                       {cars > 0 && (
                         <span className="absolute text-[8px] font-semibold whitespace-nowrap"
                           style={{ bottom: LABEL_H + barPx + 2, left: '50%', transform: 'translateX(-50%)', color: '#0a0a0a' }}>

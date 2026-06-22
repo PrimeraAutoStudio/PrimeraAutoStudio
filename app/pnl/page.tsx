@@ -38,6 +38,7 @@ interface Payable { amount: number }
 
 interface KpiTargets {
   revenue_target: number; car_count_target: number; expense_budget: number; kpi_label: string
+  net_profit_target: number; kpi_period_days: number
 }
 
 function isPastMonth(dateStr: string): boolean {
@@ -72,7 +73,7 @@ const EMPTY_EXPENSE_FORM: ExpenseForm = {
   date: localToday(), assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
 }
 
-const DEFAULT_KPI: KpiTargets = { revenue_target: 0, car_count_target: 0, expense_budget: 0, kpi_label: '' }
+const DEFAULT_KPI: KpiTargets = { revenue_target: 0, car_count_target: 0, expense_budget: 0, kpi_label: '', net_profit_target: 0, kpi_period_days: 0 }
 
 function formatPHP(n: number) {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2 })
@@ -344,6 +345,7 @@ export default function PnLPage() {
   const [form, setForm]                 = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
   const [formSaving, setFormSaving]     = useState(false)
   const [formError, setFormError]       = useState('')
+  const [varExpMonth, setVarExpMonth]   = useState<number>(0)
   const [kpiTargets, setKpiTargets]     = useState<KpiTargets>(DEFAULT_KPI)
   const [kpiEditing, setKpiEditing]     = useState(false)
   const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
@@ -364,21 +366,23 @@ export default function PnLPage() {
     if (!range.from || !range.to) return
     setDataLoading(true)
     const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
-    const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }] = await Promise.all([
+    const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }, { data: exM }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes, is_deleted').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
       supabase.from('payables').select('amount'),
       supabase.from('transactions').select('date, price').gte('date', firstOfMonth).lte('date', lastOfMonth),
-      supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label').eq('id', '1').single(),
+      supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label, net_profit_target, kpi_period_days').eq('id', '1').single(),
+      supabase.from('expenses').select('amount').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true),
     ])
     setTransactions(tx ?? [])
     setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id) })))
     if (em) setEmployees(em.map((e) => ({ ...e, id: String(e.id) })))
     setPayables(pa ?? [])
     setTxMonth(txM ?? [])
+    setVarExpMonth((exM ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
     if (st) {
-      const kpi = { revenue_target: st.revenue_target ?? 0, car_count_target: st.car_count_target ?? 0, expense_budget: st.expense_budget ?? 0, kpi_label: st.kpi_label ?? '' }
+      const kpi = { revenue_target: st.revenue_target ?? 0, car_count_target: st.car_count_target ?? 0, expense_budget: st.expense_budget ?? 0, kpi_label: st.kpi_label ?? '', net_profit_target: st.net_profit_target ?? 0, kpi_period_days: st.kpi_period_days ?? 0 }
       setKpiTargets(kpi); setKpiDraft(kpi)
     }
     setDataLoading(false)
@@ -388,8 +392,13 @@ export default function PnLPage() {
 
   async function saveKpiTargets() {
     setKpiSaving(true)
-    await supabase.from('settings').update({ revenue_target: kpiDraft.revenue_target, car_count_target: kpiDraft.car_count_target, expense_budget: kpiDraft.expense_budget, kpi_label: kpiDraft.kpi_label }).eq('id', '1')
-    setKpiTargets(kpiDraft); setKpiEditing(false); setKpiSaving(false)
+    await supabase.from('settings').update({
+      revenue_target: kpiDraft.revenue_target, car_count_target: kpiDraft.car_count_target,
+      expense_budget: kpiDraft.expense_budget, kpi_label: kpiDraft.kpi_label,
+      net_profit_target: kpiDraft.net_profit_target, kpi_period_days: rangeLen || kpiDraft.kpi_period_days,
+    }).eq('id', '1')
+    setKpiTargets({ ...kpiDraft, kpi_period_days: rangeLen || kpiDraft.kpi_period_days })
+    setKpiEditing(false); setKpiSaving(false)
   }
 
   const totalRevenue  = transactions.reduce((s, t) => s + t.price, 0)
@@ -406,10 +415,11 @@ export default function PnLPage() {
 
   const { year: beYear, month: beMonth } = range.from ? monthBoundsFromDate(range.from) : monthBoundsFromDate(todayStr)
   const fixedCosts      = payables.reduce((s, p) => s + p.amount, 0)
+  const totalBreakevenCosts = fixedCosts + varExpMonth
   const revenueMonth    = txMonth.reduce((s, t) => s + t.price, 0)
-  const remaining       = Math.max(fixedCosts - revenueMonth, 0)
-  const progressPct     = Math.min((revenueMonth / (fixedCosts || 1)) * 100, 100)
-  const aboveBreakeven  = revenueMonth >= fixedCosts
+  const remaining       = Math.max(totalBreakevenCosts - revenueMonth, 0)
+  const progressPct     = Math.min((revenueMonth / (totalBreakevenCosts || 1)) * 100, 100)
+  const aboveBreakeven  = revenueMonth >= totalBreakevenCosts
   const totalDays       = daysInMonth(beYear, beMonth)
   const dayOfMonth      = now.getFullYear() === beYear && now.getMonth() + 1 === beMonth ? now.getDate() : totalDays
   const daysLeft        = Math.max(totalDays - dayOfMonth + 1, 0)
@@ -418,7 +428,15 @@ export default function PnLPage() {
   const carsStillNeeded = Math.max(totalQuota - carsMonth, 0)
   const carsPerDayNeeded = daysLeft > 0 ? (carsStillNeeded / daysLeft).toFixed(1) : '0'
   const beMonthLabel    = new Date(beYear, beMonth - 1, 1).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
-  const netProfitTarget = kpiTargets.revenue_target - kpiTargets.expense_budget
+
+  const kpiPeriodDays = kpiTargets.kpi_period_days || rangeLen || 30
+  const prorationFactor = rangeLen > 0 && kpiPeriodDays > 0 ? rangeLen / kpiPeriodDays : 1
+  const proratedRevTarget = Math.round(kpiTargets.revenue_target * prorationFactor)
+  const proratedCarTarget = Math.round(kpiTargets.car_count_target * prorationFactor)
+  const proratedExpBudget = Math.round(kpiTargets.expense_budget * prorationFactor)
+  const baseNetProfit     = kpiTargets.net_profit_target || (kpiTargets.revenue_target - kpiTargets.expense_budget)
+  const proratedNetProfit = Math.round(baseNetProfit * prorationFactor)
+  const isProrated        = Math.abs(prorationFactor - 1) > 0.01
 
   const KNOWN_FIRST_NAMES = ['Jhun', 'Allen', 'Mik', 'Von', 'Sam', 'Jobert', 'Eugene']
   function resolveEmployeeName(firstName: string): string {
@@ -567,19 +585,26 @@ export default function PnLPage() {
               <h2 className="mb-3 text-sm font-semibold text-gray-800 sm:mb-4 sm:text-base">
                 Breakeven — <span style={{ color: '#B8922A' }}>{beMonthLabel}</span>
               </h2>
+              <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-gray-600">
+                <span className="font-semibold" style={{ color: '#B8922A' }}>Breakeven Target: </span>
+                Fixed {formatPHP(fixedCosts)}
+                {varExpMonth > 0 && <> + Variable {formatPHP(varExpMonth)}</>}
+                {' = '}
+                <span className="font-bold text-gray-900">{formatPHP(totalBreakevenCosts)}</span>
+              </div>
               <div className="mb-4 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Fixed Costs</p>
-                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(fixedCosts)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total Target</p>
+                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(totalBreakevenCosts)}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue</p>
                   <p className={`text-lg font-bold sm:text-xl ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>{formatPHP(revenueMonth)}</p>
                 </div>
                 <div className="col-span-2 sm:col-span-1">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{aboveBreakeven ? 'Above Breakeven' : 'Still Needed'}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{aboveBreakeven ? 'Above Breakeven By' : 'Still Needed'}</p>
                   <p className={`text-lg font-bold sm:text-xl ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>
-                    {formatPHP(aboveBreakeven ? revenueMonth - fixedCosts : remaining)}
+                    {formatPHP(aboveBreakeven ? revenueMonth - totalBreakevenCosts : remaining)}
                   </p>
                 </div>
               </div>
@@ -590,7 +615,7 @@ export default function PnLPage() {
               <div className="mb-4 flex justify-between text-xs text-gray-400">
                 <span>₱0</span>
                 <span>{progressPct.toFixed(1)}%</span>
-                <span>{formatPHP(fixedCosts)}</span>
+                <span>{formatPHP(totalBreakevenCosts)}</span>
               </div>
               <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 sm:px-4 sm:py-3">
                 <div className="grid grid-cols-2 gap-2 text-xs sm:flex sm:flex-wrap sm:items-center sm:gap-4 sm:text-sm">
@@ -648,10 +673,9 @@ export default function PnLPage() {
                       <input type="number" inputMode="decimal" value={kpiDraft.expense_budget || ''} onChange={(e) => setKpiDraft((d) => ({ ...d, expense_budget: parseFloat(e.target.value) || 0 }))} placeholder="0" className={kpiInputCls} min="0" />
                     </div>
                     <div>
-                      <label className={labelCls}>Net Profit (auto)</label>
-                      <div className="rounded-lg border border-gray-200 bg-gray-100 px-3 py-2 text-sm text-gray-500">
-                        {kpiDraft.revenue_target > 0 || kpiDraft.expense_budget > 0 ? formatPHP(kpiDraft.revenue_target - kpiDraft.expense_budget) : '—'}
-                      </div>
+                      <label className={labelCls}>Net Profit Target (₱)</label>
+                      <input type="number" inputMode="decimal" value={kpiDraft.net_profit_target || ''} onChange={(e) => setKpiDraft((d) => ({ ...d, net_profit_target: parseFloat(e.target.value) || 0 }))} placeholder={kpiDraft.revenue_target > 0 || kpiDraft.expense_budget > 0 ? String(kpiDraft.revenue_target - kpiDraft.expense_budget) : '0'} className={kpiInputCls} min="0" />
+                      <p className="mt-0.5 text-[10px] text-gray-400">Leave 0 to auto-calculate from Revenue − Expenses</p>
                     </div>
                   </div>
                   <button onClick={saveKpiTargets} disabled={kpiSaving}
@@ -661,16 +685,21 @@ export default function PnLPage() {
                   </button>
                 </div>
               )}
+              {isProrated && (
+                <p className="mb-2 text-[11px] text-gray-400">
+                  Targets prorated for {rangeLen}-day range (set for {kpiPeriodDays} days)
+                </p>
+              )}
               {kpiTargets.revenue_target === 0 && kpiTargets.car_count_target === 0 && kpiTargets.expense_budget === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
                   <p className="text-sm text-gray-400">No targets set. Tap Edit to add KPIs.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <KpiRow label="Revenue" target={kpiTargets.revenue_target} actual={totalRevenue} isCurrency higherIsBetter />
-                  <KpiRow label="Car Count" target={kpiTargets.car_count_target} actual={totalCars} isCurrency={false} higherIsBetter />
-                  <KpiRow label="Expense Budget" target={kpiTargets.expense_budget} actual={totalExpenses} isCurrency higherIsBetter={false} />
-                  {netProfitTarget > 0 && <KpiRow label="Net Profit" target={netProfitTarget} actual={netProfit} isCurrency higherIsBetter />}
+                  <KpiRow label="Revenue" target={proratedRevTarget} actual={totalRevenue} isCurrency higherIsBetter />
+                  <KpiRow label="Car Count" target={proratedCarTarget} actual={totalCars} isCurrency={false} higherIsBetter />
+                  <KpiRow label="Expense Budget" target={proratedExpBudget} actual={totalExpenses} isCurrency higherIsBetter={false} />
+                  {proratedNetProfit > 0 && <KpiRow label="Net Profit" target={proratedNetProfit} actual={netProfit} isCurrency higherIsBetter />}
                 </div>
               )}
             </section>
