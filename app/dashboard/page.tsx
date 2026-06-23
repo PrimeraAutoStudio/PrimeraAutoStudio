@@ -253,11 +253,17 @@ export default function DashboardPage() {
   const teamStats: Record<string, TeamStats> = {}
   teams.forEach((t) => { teamStats[t] = { cars: 0, carwashes: 0, addons: 0, revenue: 0, addonMap: {}, sizeMap: {}, serviceMap: {} } })
 
+  // Build a normalized lookup so team names match even with different casing/spacing
+  const teamKeyMap: Record<string, string> = {}
+  teams.forEach((t) => { teamKeyMap[t.trim().toLowerCase()] = t })
+
   txRange.forEach((t) => {
     if (!t.team) return
-    const key = t.team
+    const normalized = t.team.trim().toLowerCase()
+    const key = teamKeyMap[normalized] ?? t.team.trim()
     if (!teamStats[key]) teamStats[key] = { cars: 0, carwashes: 0, addons: 0, revenue: 0, addonMap: {}, sizeMap: {}, serviceMap: {} }
     teamStats[key].cars++
+    teamStats[key].carwashes++ // every transaction = 1 car wash
     teamStats[key].revenue += t.price
     const sz = t.size_category || 'Unknown'
     teamStats[key].sizeMap[sz] = (teamStats[key].sizeMap[sz] ?? 0) + 1
@@ -272,14 +278,12 @@ export default function DashboardPage() {
         if (!teamStats[key].addonMap[svc]) teamStats[key].addonMap[svc] = { count: 0, revenue: 0 }
         teamStats[key].addonMap[svc].count++
         teamStats[key].addonMap[svc].revenue += svcPrice
-      } else if (svc === 'Basic Wash') {
-        teamStats[key].carwashes++
       }
     })
   })
 
   function sortedFor(view: LeaderboardView) {
-    return teams.filter((t) => teamStats[t]).sort((a, b) => {
+    return Object.keys(teamStats).filter((t) => teamStats[t].cars > 0).sort((a, b) => {
       if (view === 'carwashes') return teamStats[b].carwashes - teamStats[a].carwashes
       if (view === 'addons')   return teamStats[b].addons - teamStats[a].addons
       return teamStats[b].revenue - teamStats[a].revenue
