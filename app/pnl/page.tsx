@@ -20,12 +20,12 @@ interface Transaction {
 
 interface Expense {
   id: string; date: string; assignee: string | null; description: string; category: string
-  amount: number; payment_type: string; notes: string | null
+  amount: number; payment_type: string; notes: string | null; payable_id: number | null
 }
 
 interface ExpenseForm {
   date: string; assignee: string; description: string; category: string
-  amount: string; payment_type: string; notes: string
+  amount: string; payment_type: string; notes: string; payable_id: string
 }
 
 interface EditExpenseState {
@@ -34,7 +34,7 @@ interface EditExpenseState {
 }
 
 interface EmployeeOption { id: string; full_name: string; last_name: string | null }
-interface Payable { amount: number }
+interface Payable { id: number; name: string; amount: number; due_day: number | null }
 
 interface KpiTargets {
   revenue_target: number; car_count_target: number; expense_budget: number; kpi_label: string
@@ -70,7 +70,7 @@ function localToday() {
 }
 
 const EMPTY_EXPENSE_FORM: ExpenseForm = {
-  date: localToday(), assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '',
+  date: localToday(), assignee: '', description: '', category: 'Supplies', amount: '', payment_type: 'Cash', notes: '', payable_id: '',
 }
 
 const DEFAULT_KPI: KpiTargets = { revenue_target: 0, car_count_target: 0, expense_budget: 0, kpi_label: '', net_profit_target: 0, kpi_period_days: 0 }
@@ -368,15 +368,16 @@ export default function PnLPage() {
     const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
     const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }, { data: exM }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
-      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes, is_deleted').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
+      supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes, is_deleted, payable_id').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
-      supabase.from('payables').select('amount'),
+      supabase.from('payables').select('id, name, amount, due_day').order('name'),
       supabase.from('transactions').select('date, price').gte('date', firstOfMonth).lte('date', lastOfMonth),
       supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label, net_profit_target, kpi_period_days').eq('id', '1').single(),
-      supabase.from('expenses').select('amount').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true),
+      // Only variable expenses (no payable_id) for breakeven — avoids double-counting fixed costs
+      supabase.from('expenses').select('amount, payable_id').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).is('payable_id', null),
     ])
     setTransactions(tx ?? [])
-    setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id) })))
+    setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id), payable_id: e.payable_id ?? null })))
     if (em) setEmployees(em.map((e) => ({ ...e, id: String(e.id) })))
     setPayables(pa ?? [])
     setTxMonth(txM ?? [])
@@ -414,6 +415,15 @@ export default function PnLPage() {
   const labelStep     = rangeLen <= 7 ? 1 : rangeLen <= 14 ? 2 : rangeLen <= 31 ? 4 : 7
 
   const { year: beYear, month: beMonth } = range.from ? monthBoundsFromDate(range.from) : monthBoundsFromDate(todayStr)
+  const { firstOfMonth: beFirst, lastOfMonth: beLast } = monthBoundsFromDate(`${beYear}-${String(beMonth).padStart(2, '0')}-01`)
+
+  // Which payables have been paid this month (a linked expense row exists in the current month)
+  const paidPayableMap: Record<number, string> = {} // payable_id → payment date
+  expenses.forEach((e) => {
+    if (e.payable_id && e.date >= beFirst && e.date <= beLast)
+      paidPayableMap[e.payable_id] = e.date
+  })
+
   const fixedCosts      = payables.reduce((s, p) => s + p.amount, 0)
   const totalBreakevenCosts = fixedCosts + varExpMonth
   const revenueMonth    = txMonth.reduce((s, t) => s + t.price, 0)
@@ -476,7 +486,8 @@ export default function PnLPage() {
     if (!form.amount || !form.date) { setFormError('Date and amount are required.'); return }
     const { description: normDesc, assignee: normAssignee } = normalise({ description: form.description, category: form.category, assignee: form.assignee })
     setFormSaving(true)
-    const { error } = await supabase.from('expenses').insert({ date: form.date, assignee: normAssignee || null, description: normDesc, category: form.category, amount: parseFloat(form.amount), payment_type: form.payment_type, notes: form.notes })
+    const payableId = form.payable_id ? parseInt(form.payable_id) : null
+    const { error } = await supabase.from('expenses').insert({ date: form.date, assignee: normAssignee || null, description: normDesc, category: form.category, amount: parseFloat(form.amount), payment_type: form.payment_type, notes: form.notes, payable_id: payableId })
     setFormSaving(false)
     if (error) { setFormError(error.message); return }
     setForm({ ...EMPTY_EXPENSE_FORM, date: form.date }); setShowForm(false); fetchData()
@@ -637,6 +648,36 @@ export default function PnLPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Payables paid/outstanding checklist */}
+              {payables.length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Fixed Costs Status</p>
+                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {payables.map((p) => {
+                      const paidDate = paidPayableMap[p.id]
+                      return (
+                        <div key={p.id} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${paidDate ? 'bg-green-50' : 'bg-gray-50'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={paidDate ? 'text-green-600' : 'text-gray-400'}>
+                              {paidDate ? '✓' : '○'}
+                            </span>
+                            <span className={`font-medium ${paidDate ? 'text-green-700' : 'text-gray-700'}`}>{p.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-gray-500">{formatPHP(p.amount)}</span>
+                            {paidDate ? (
+                              <span className="ml-2 text-green-600">paid {new Date(paidDate + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</span>
+                            ) : p.due_day ? (
+                              <span className="ml-2 text-gray-400">due day {p.due_day}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </section>
 
             {/* ── 2. KPI Tracker ── */}
@@ -781,6 +822,19 @@ export default function PnLPage() {
                       <label className={labelCls}>Notes</label>
                       <input type="text" name="notes" value={form.notes} onChange={handleFormChange} placeholder="Optional notes…" className={inputCls} />
                     </div>
+                    {payables.length > 0 && (
+                      <div className="col-span-2 sm:col-span-3">
+                        <label className={labelCls}>Pays off a fixed cost? <span className="font-normal text-gray-400">(prevents double-counting in Breakeven)</span></label>
+                        <select name="payable_id" value={form.payable_id} onChange={handleFormChange} className={inputCls}>
+                          <option value="">— None (variable expense) —</option>
+                          {payables.map((p) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {p.name} — {formatPHP(p.amount)}{p.due_day ? ` (due day ${p.due_day})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                   {formError && <p className="mt-3 text-sm text-red-600">{formError}</p>}
                   <div className="mt-4 flex gap-3">
