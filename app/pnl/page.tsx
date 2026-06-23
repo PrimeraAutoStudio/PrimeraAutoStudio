@@ -345,7 +345,8 @@ export default function PnLPage() {
   const [form, setForm]                 = useState<ExpenseForm>(EMPTY_EXPENSE_FORM)
   const [formSaving, setFormSaving]     = useState(false)
   const [formError, setFormError]       = useState('')
-  const [varExpMonth, setVarExpMonth]   = useState<number>(0)
+  const [varExpMonth, setVarExpMonth]       = useState<number>(0)
+  const [paidPayablesMonth, setPaidPayablesMonth] = useState<{ payable_id: string; date: string }[]>([])
   const [kpiTargets, setKpiTargets]     = useState<KpiTargets>(DEFAULT_KPI)
   const [kpiEditing, setKpiEditing]     = useState(false)
   const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
@@ -366,15 +367,17 @@ export default function PnLPage() {
     if (!range.from || !range.to) return
     setDataLoading(true)
     const { firstOfMonth, lastOfMonth } = monthBoundsFromDate(range.from)
-    const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }, { data: exM }] = await Promise.all([
+    const [{ data: tx }, { data: ex }, { data: em }, { data: pa }, { data: txM }, { data: st }, { data: exM }, { data: paidExp }] = await Promise.all([
       supabase.from('transactions').select('date, price, service_name, payment_method, status').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('expenses').select('id, date, assignee, description, category, amount, payment_type, notes, is_deleted, payable_id').gte('date', range.from).lte('date', range.to).order('date', { ascending: false }),
       supabase.from('employees').select('id, full_name, last_name').eq('is_active', true).order('full_name'),
       supabase.from('payables').select('id, name, amount, due_day').order('name'),
       supabase.from('transactions').select('date, price').gte('date', firstOfMonth).lte('date', lastOfMonth),
       supabase.from('settings').select('revenue_target, car_count_target, expense_budget, kpi_label, net_profit_target, kpi_period_days').eq('id', '1').single(),
-      // Only variable expenses (no payable_id) for breakeven — avoids double-counting fixed costs
-      supabase.from('expenses').select('amount, payable_id').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).is('payable_id', null),
+      // Variable expenses (payable_id IS NULL) for breakeven — excludes fixed cost payments
+      supabase.from('expenses').select('amount').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).is('payable_id', null),
+      // Paid payables this month (payable_id IS NOT NULL) — for checklist and paid fixed cost calc
+      supabase.from('expenses').select('payable_id, date').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).not('payable_id', 'is', null),
     ])
     setTransactions(tx ?? [])
     setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id), payable_id: e.payable_id ?? null })))
@@ -382,6 +385,7 @@ export default function PnLPage() {
     setPayables(pa ?? [])
     setTxMonth(txM ?? [])
     setVarExpMonth((exM ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
+    setPaidPayablesMonth((paidExp ?? []) as { payable_id: string; date: string }[])
     if (st) {
       const kpi = { revenue_target: st.revenue_target ?? 0, car_count_target: st.car_count_target ?? 0, expense_budget: st.expense_budget ?? 0, kpi_label: st.kpi_label ?? '', net_profit_target: st.net_profit_target ?? 0, kpi_period_days: st.kpi_period_days ?? 0 }
       setKpiTargets(kpi); setKpiDraft(kpi)
@@ -417,19 +421,23 @@ export default function PnLPage() {
   const { year: beYear, month: beMonth } = range.from ? monthBoundsFromDate(range.from) : monthBoundsFromDate(todayStr)
   const { firstOfMonth: beFirst, lastOfMonth: beLast } = monthBoundsFromDate(`${beYear}-${String(beMonth).padStart(2, '0')}-01`)
 
-  // Which payables have been paid this month (a linked expense row exists in the current month)
-  const paidPayableMap: Record<string, string> = {} // payable_id → payment date
-  expenses.forEach((e) => {
-    if (e.payable_id && e.date >= beFirst && e.date <= beLast)
+  // Full-month paid payables map (from dedicated DB fetch, not range-filtered expenses)
+  const paidPayableMap: Record<string, string> = {} // payable_id → earliest payment date
+  paidPayablesMonth.forEach((e) => {
+    if (!paidPayableMap[e.payable_id] || e.date < paidPayableMap[e.payable_id])
       paidPayableMap[e.payable_id] = e.date
   })
 
   const fixedCosts      = payables.reduce((s, p) => s + p.amount, 0)
-  const totalBreakevenCosts = fixedCosts + varExpMonth
+  const paidFixedCosts  = payables.filter((p) => paidPayableMap[p.id]).reduce((s, p) => s + p.amount, 0)
+  const unpaidFixedCosts = fixedCosts - paidFixedCosts
+  // Still Needed = outstanding fixed obligations + variable spending − revenue already earned
   const revenueMonth    = txMonth.reduce((s, t) => s + t.price, 0)
-  const remaining       = Math.max(totalBreakevenCosts - revenueMonth, 0)
+  const totalBreakevenCosts = fixedCosts + varExpMonth
+  const remainingObligations = unpaidFixedCosts + varExpMonth  // what hasn't been "covered" by payables yet
+  const remaining       = Math.max(remainingObligations - revenueMonth, 0)
   const progressPct     = Math.min((revenueMonth / (totalBreakevenCosts || 1)) * 100, 100)
-  const aboveBreakeven  = revenueMonth >= totalBreakevenCosts
+  const aboveBreakeven  = revenueMonth >= remainingObligations
   const totalDays       = daysInMonth(beYear, beMonth)
   const dayOfMonth      = now.getFullYear() === beYear && now.getMonth() + 1 === beMonth ? now.getDate() : totalDays
   const daysLeft        = Math.max(totalDays - dayOfMonth + 1, 0)
@@ -596,26 +604,36 @@ export default function PnLPage() {
               <h2 className="mb-3 text-sm font-semibold text-gray-800 sm:mb-4 sm:text-base">
                 Breakeven — <span style={{ color: '#B8922A' }}>{beMonthLabel}</span>
               </h2>
-              <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-gray-600">
-                <span className="font-semibold" style={{ color: '#B8922A' }}>Breakeven Target: </span>
-                Fixed {formatPHP(fixedCosts)}
-                {varExpMonth > 0 && <> + Variable {formatPHP(varExpMonth)}</>}
-                {' = '}
-                <span className="font-bold text-gray-900">{formatPHP(totalBreakevenCosts)}</span>
+              {/* Cost breakdown badge */}
+              <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-gray-600 space-y-0.5">
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                  <span>
+                    <span className="font-semibold" style={{ color: '#B8922A' }}>Fixed: </span>
+                    {formatPHP(fixedCosts)}
+                    {paidFixedCosts > 0 && <span className="ml-1 text-green-600">({formatPHP(paidFixedCosts)} paid)</span>}
+                  </span>
+                  {varExpMonth > 0 && (
+                    <span><span className="font-semibold" style={{ color: '#B8922A' }}>Variable: </span>{formatPHP(varExpMonth)}</span>
+                  )}
+                </div>
+                <div className="font-semibold text-gray-800">
+                  Outstanding obligations: {formatPHP(unpaidFixedCosts)} unpaid fixed
+                  {varExpMonth > 0 ? ` + ${formatPHP(varExpMonth)} variable = ${formatPHP(remainingObligations)}` : ''}
+                </div>
               </div>
               <div className="mb-4 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total Target</p>
-                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(totalBreakevenCosts)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Obligations Left</p>
+                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(remainingObligations)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue This Month</p>
                   <p className={`text-lg font-bold sm:text-xl ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>{formatPHP(revenueMonth)}</p>
                 </div>
                 <div className="col-span-2 sm:col-span-1">
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{aboveBreakeven ? 'Above Breakeven By' : 'Still Needed'}</p>
                   <p className={`text-lg font-bold sm:text-xl ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>
-                    {formatPHP(aboveBreakeven ? revenueMonth - totalBreakevenCosts : remaining)}
+                    {formatPHP(aboveBreakeven ? revenueMonth - remainingObligations : remaining)}
                   </p>
                 </div>
               </div>
@@ -625,7 +643,7 @@ export default function PnLPage() {
               </div>
               <div className="mb-4 flex justify-between text-xs text-gray-400">
                 <span>₱0</span>
-                <span>{progressPct.toFixed(1)}%</span>
+                <span>{progressPct.toFixed(1)}% of total target</span>
                 <span>{formatPHP(totalBreakevenCosts)}</span>
               </div>
               <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 sm:px-4 sm:py-3">
