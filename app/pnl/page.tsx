@@ -20,7 +20,7 @@ interface Transaction {
 
 interface Expense {
   id: string; date: string; assignee: string | null; description: string; category: string
-  amount: number; payment_type: string; notes: string | null; payable_id: number | null
+  amount: number; payment_type: string; notes: string | null; payable_id: string | null
 }
 
 interface ExpenseForm {
@@ -34,7 +34,7 @@ interface EditExpenseState {
 }
 
 interface EmployeeOption { id: string; full_name: string; last_name: string | null }
-interface Payable { id: number; name: string; amount: number; due_day: number | null }
+interface Payable { id: string; name: string; amount: number; due_day: number | null }
 
 interface KpiTargets {
   revenue_target: number; car_count_target: number; expense_budget: number; kpi_label: string
@@ -418,7 +418,7 @@ export default function PnLPage() {
   const { firstOfMonth: beFirst, lastOfMonth: beLast } = monthBoundsFromDate(`${beYear}-${String(beMonth).padStart(2, '0')}-01`)
 
   // Which payables have been paid this month (a linked expense row exists in the current month)
-  const paidPayableMap: Record<number, string> = {} // payable_id → payment date
+  const paidPayableMap: Record<string, string> = {} // payable_id → payment date
   expenses.forEach((e) => {
     if (e.payable_id && e.date >= beFirst && e.date <= beLast)
       paidPayableMap[e.payable_id] = e.date
@@ -486,7 +486,7 @@ export default function PnLPage() {
     if (!form.amount || !form.date) { setFormError('Date and amount are required.'); return }
     const { description: normDesc, assignee: normAssignee } = normalise({ description: form.description, category: form.category, assignee: form.assignee })
     setFormSaving(true)
-    const payableId = form.payable_id ? parseInt(form.payable_id) : null
+    const payableId = form.payable_id || null
     const { error } = await supabase.from('expenses').insert({ date: form.date, assignee: normAssignee || null, description: normDesc, category: form.category, amount: parseFloat(form.amount), payment_type: form.payment_type, notes: form.notes, payable_id: payableId })
     setFormSaving(false)
     if (error) { setFormError(error.message); return }
