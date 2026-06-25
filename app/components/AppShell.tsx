@@ -67,6 +67,16 @@ function IconLoyalty() {
   )
 }
 
+function IconInventory() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0">
+      <rect x="2" y="3" width="20" height="5" rx="1" />
+      <rect x="2" y="10" width="20" height="5" rx="1" />
+      <rect x="2" y="17" width="20" height="4" rx="1" />
+    </svg>
+  )
+}
+
 function IconLogout() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0">
@@ -109,7 +119,8 @@ type Role = 'employee' | 'admin'
 const MAIN_NAV: { href: string; label: string; Icon: () => React.ReactElement; roles: Role[] }[] = [
   { href: '/dashboard', label: 'Dashboard',      Icon: IconDashboard, roles: ['admin']             },
   { href: '/checkin',   label: 'Check In',       Icon: IconCheckIn,   roles: ['employee', 'admin'] },
-  { href: '/queue',     label: 'Queue',          Icon: IconQueue,     roles: ['employee', 'admin'] },
+  { href: '/queue',      label: 'Queue',          Icon: IconQueue,     roles: ['employee', 'admin'] },
+  { href: '/inventory', label: 'Inventory',      Icon: IconInventory, roles: ['employee', 'admin'] },
   { href: '/pnl',       label: 'P&L Tracker',    Icon: IconPnL,       roles: ['admin']             },
   { href: '/loyalty',   label: 'Primera Circle', Icon: IconLoyalty,   roles: ['admin']             },
   { href: '/promos',    label: 'Promos',         Icon: IconPromos,    roles: ['admin']             },
@@ -124,8 +135,9 @@ const ALL_NAV = [...MAIN_NAV, ...BOTTOM_NAV]
 const BOTTOM_TABS: { href: string; label: string; Icon: () => React.ReactElement; roles: Role[] }[] = [
   { href: '/dashboard', label: 'Home',     Icon: IconDashboard, roles: ['admin']             },
   { href: '/checkin',   label: 'Check In', Icon: IconCheckIn,   roles: ['employee', 'admin'] },
-  { href: '/queue',     label: 'Queue',    Icon: IconQueue,     roles: ['employee', 'admin'] },
-  { href: '/pnl',       label: 'P&L',      Icon: IconPnL,       roles: ['admin']             },
+  { href: '/queue',      label: 'Queue',     Icon: IconQueue,     roles: ['employee', 'admin'] },
+  { href: '/inventory', label: 'Stock',     Icon: IconInventory, roles: ['employee']          },
+  { href: '/pnl',       label: 'P&L',       Icon: IconPnL,       roles: ['admin']             },
   { href: '/settings',  label: 'Settings', Icon: IconSettings,  roles: ['admin']             },
 ]
 
