@@ -149,6 +149,29 @@ function PayablePill({ name }: { name: string }) {
   )
 }
 
+function ConfirmModal({ title, message, confirmLabel = 'Confirm', danger = true, onConfirm, onCancel }: {
+  title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void; onCancel: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 sm:items-center sm:px-4">
+      <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-sm sm:rounded-2xl">
+        <h3 className="mb-2 text-base font-bold text-gray-900">{title}</h3>
+        <p className="mb-6 text-sm text-gray-500">{message}</p>
+        <div className="flex gap-3">
+          <button onClick={onConfirm}
+            className={`flex-1 rounded-xl py-3.5 text-sm font-semibold text-white ${danger ? 'bg-red-500 hover:bg-red-600' : 'bg-[#B8922A] hover:bg-[#D4AB4E]'}`}>
+            {confirmLabel}
+          </button>
+          <button onClick={onCancel}
+            className="flex-1 rounded-xl border border-gray-200 py-3.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: {
   chartDates: string[]; chartValues: number[]; maxDayRevenue: number; todayStr: string; labelStep: number
 }) {
@@ -366,14 +389,28 @@ export default function PnLPage() {
   const [kpiEditing, setKpiEditing]     = useState(false)
   const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
   const [kpiSaving, setKpiSaving]       = useState(false)
-  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null)
+  const [editModalExpenseId, setEditModalExpenseId] = useState<string | null>(null)
   const [editExpense, setEditExpense] = useState<EditExpenseState>({ date: '', assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '', payable_id: '' })
+  const [editInitial, setEditInitial] = useState<EditExpenseState>({ date: '', assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '', payable_id: '' })
   const [editSaving, setEditSaving]   = useState(false)
   const [editError, setEditError]     = useState('')
+  const [showDirtyWarning, setShowDirtyWarning] = useState(false)
   const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null)
   const [deletingExpense, setDeletingExpense] = useState(false)
   const [deleteOverrideOpen, setDeleteOverrideOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  // Sort
+  const [sortCol, setSortCol] = useState<string>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  // Filters
+  const [filterCategory, setFilterCategory] = useState('')
+  const [filterAssignee, setFilterAssignee] = useState('')
+  const [filterPayment, setFilterPayment] = useState('')
+  // Bulk select
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleteOverrideOpen, setBulkDeleteOverrideOpen] = useState(false)
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   const now = new Date()
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -409,6 +446,12 @@ export default function PnLPage() {
   }, [range])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && editModalExpenseId) tryCloseEditModal() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   async function saveKpiTargets() {
     setKpiSaving(true)
@@ -516,14 +559,23 @@ export default function PnLPage() {
     setForm({ ...EMPTY_EXPENSE_FORM, date: form.date }); setShowForm(false); fetchData()
   }
 
+  const editIsDirty = JSON.stringify(editExpense) !== JSON.stringify(editInitial)
+
   function startEditExpense(ex: Expense) {
     if (isPastMonth(ex.date)) return
-    setEditingExpenseId(ex.id)
-    setEditExpense({ date: ex.date, assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '', payable_id: ex.payable_id ?? '' })
+    const state = { date: ex.date, assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '', payable_id: ex.payable_id ?? '' }
+    setEditExpense(state)
+    setEditInitial(state)
+    setEditModalExpenseId(ex.id)
     setEditError('')
   }
 
-  function cancelEditExpense() { setEditingExpenseId(null); setEditError('') }
+  function tryCloseEditModal() {
+    if (editIsDirty) { setShowDirtyWarning(true) }
+    else { setEditModalExpenseId(null); setEditError('') }
+  }
+
+  function discardEditAndClose() { setShowDirtyWarning(false); setEditModalExpenseId(null); setEditError('') }
 
   async function saveEditExpense(id: string) {
     setEditSaving(true); setEditError('')
@@ -539,8 +591,18 @@ export default function PnLPage() {
     }).eq('id', id)
     setEditSaving(false)
     if (error) { setEditError(error.message); return }
-    setEditingExpenseId(null)
-    fetchData()  // refetch so breakeven reflects any payable_id change
+    setEditModalExpenseId(null)
+    fetchData()
+  }
+
+  async function bulkDeleteSelected() {
+    setBulkDeleting(true)
+    const ids = Array.from(selectedIds)
+    await supabase.from('expenses').update({ is_deleted: true, deleted_at: new Date().toISOString() }).in('id', ids)
+    setBulkDeleting(false)
+    setBulkDeleteConfirmOpen(false)
+    setSelectedIds(new Set())
+    fetchData()
   }
 
   function requestDeleteExpense(id: string) {
@@ -588,6 +650,48 @@ export default function PnLPage() {
     { value: 'Crew', label: 'Crew' },
     ...employees.map((emp) => ({ value: emp.full_name, label: emp.full_name })),
   ]
+
+  // Distinct values for filter dropdowns (from full expenses list)
+  const distinctCategories = [...new Set(expenses.map((e) => e.category))].sort()
+  const distinctAssignees  = [...new Set(expenses.map((e) => e.assignee ?? '').filter(Boolean))].sort()
+  const distinctPayments   = [...new Set(expenses.map((e) => e.payment_type))].sort()
+  const anyFilter = filterCategory || filterAssignee || filterPayment
+
+  // Apply filters then sort
+  const displayedExpenses = expenses
+    .filter((e) => !filterCategory || e.category === filterCategory)
+    .filter((e) => !filterAssignee || (e.assignee ?? '') === filterAssignee)
+    .filter((e) => !filterPayment || e.payment_type === filterPayment)
+    .sort((a, b) => {
+      const aVal = String((a as unknown as Record<string, unknown>)[sortCol] ?? '')
+      const bVal = String((b as unknown as Record<string, unknown>)[sortCol] ?? '')
+      const cmp  = aVal.localeCompare(bVal, undefined, { numeric: true })
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+
+  const displayTotal = displayedExpenses.reduce((s, e) => s + e.amount, 0)
+
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortCol(col); setSortDir('asc') }
+  }
+  function sortIndicator(col: string) {
+    if (sortCol !== col) return <span className="ml-0.5 text-gray-300">⇅</span>
+    return <span className="ml-0.5" style={{ color: '#B8922A' }}>{sortDir === 'asc' ? '▲' : '▼'}</span>
+  }
+
+  const allVisibleSelected = displayedExpenses.length > 0 && displayedExpenses.every((e) => selectedIds.has(e.id))
+  function toggleSelectAll() {
+    if (allVisibleSelected) setSelectedIds(new Set())
+    else setSelectedIds(new Set(displayedExpenses.map((e) => e.id)))
+  }
+  function toggleSelectId(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   return (
     <div className="px-3 py-4 sm:px-6 sm:py-6">
@@ -924,224 +1028,167 @@ export default function PnLPage() {
                 </form>
               )}
 
+              {/* ── Filter bar ── */}
+              {expenses.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 px-4 sm:px-0">
+                  <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:border-[#B8922A] focus:outline-none">
+                    <option value="">All Categories</option>
+                    {distinctCategories.map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                  <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:border-[#B8922A] focus:outline-none">
+                    <option value="">All Assignees</option>
+                    {distinctAssignees.map((a) => <option key={a}>{a}</option>)}
+                  </select>
+                  <select value={filterPayment} onChange={(e) => setFilterPayment(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 focus:border-[#B8922A] focus:outline-none">
+                    <option value="">All Payment Types</option>
+                    {distinctPayments.map((p) => <option key={p}>{p}</option>)}
+                  </select>
+                  {anyFilter && (
+                    <button onClick={() => { setFilterCategory(''); setFilterAssignee(''); setFilterPayment('') }}
+                      className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50">
+                      Clear filters ✕
+                    </button>
+                  )}
+                  {anyFilter && (
+                    <span className="text-xs text-gray-400">{displayedExpenses.length} of {expenses.length}</span>
+                  )}
+                </div>
+              )}
+
               {expenses.length === 0 ? (
                 <p className="py-12 text-center text-sm text-gray-400">No expenses logged for this period.</p>
+              ) : displayedExpenses.length === 0 ? (
+                <p className="py-8 text-center text-sm text-gray-400">No expenses match the active filters.</p>
               ) : (
                 <>
                   {/* ── MOBILE: Card list ── */}
                   <div className="divide-y divide-gray-50 sm:hidden">
-                    {expenses.map((ex) => {
-                      const isEditing = editingExpenseId === ex.id
-                      return (
-                        <div key={ex.id} className={`px-4 py-3 ${isEditing ? 'bg-amber-50' : ''}`}>
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Date</label>
-                                  <input type="date" value={editExpense.date} onChange={(e) => setEditExpense((s) => ({ ...s, date: e.target.value }))} className={editInputCls} />
-                                </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Amount (₱)</label>
-                                  <input type="number" inputMode="decimal" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
-                                </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Category</label>
-                                  <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={editInputCls}>
-                                    {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Payment</label>
-                                  <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={editInputCls}>
-                                    {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Assignee</label>
-                                  <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>
-                                    {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Description</label>
-                                  <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
-                                </div>
-                                <div className="col-span-2">
-                                  <label className="mb-0.5 block text-xs text-gray-500">Notes</label>
-                                  <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={editInputCls} placeholder="Optional notes…" />
-                                </div>
-                                {payables.length > 0 && (
-                                  <div className="col-span-2">
-                                    <label className="mb-0.5 block text-xs text-gray-500">Pays off a fixed cost?</label>
-                                    <select value={editExpense.payable_id} onChange={(e) => setEditExpense((s) => ({ ...s, payable_id: e.target.value }))} className={editInputCls}>
-                                      <option value="">— None (variable expense) —</option>
-                                      {payables.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatPHP(p.amount)}</option>)}
-                                    </select>
-                                  </div>
+                    {/* Mobile select-all */}
+                    <div className="flex items-center gap-2 px-4 py-2">
+                      <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll}
+                        className="h-4 w-4 rounded border-gray-300 accent-[#B8922A]" />
+                      <span className="text-xs text-gray-500">Select all</span>
+                    </div>
+                    {displayedExpenses.map((ex) => (
+                      <div key={ex.id} className={`px-4 py-3 ${selectedIds.has(ex.id) ? 'bg-amber-50/60' : ''}`}>
+                        <div className="flex items-start gap-2">
+                          <input type="checkbox" checked={selectedIds.has(ex.id)} onChange={() => toggleSelectId(ex.id)}
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 accent-[#B8922A]" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between mb-1">
+                              <div>
+                                <span className="text-sm font-semibold text-gray-800">
+                                  {ex.description || ex.assignee || ex.category}
+                                </span>
+                                {ex.assignee && ex.description && (
+                                  <span className="ml-2 text-xs text-gray-400">{ex.assignee}</span>
                                 )}
                               </div>
-                              {editError && <p className="text-xs text-red-600">{editError}</p>}
-                              <div className="flex gap-2 pt-1">
-                                <button onClick={() => saveEditExpense(ex.id)} disabled={editSaving}
-                                  className="flex-1 rounded-lg py-2 text-xs font-bold text-white disabled:opacity-60"
-                                  style={{ backgroundColor: '#B8922A' }}>
-                                  {editSaving ? '…' : 'Save'}
-                                </button>
-                                <button onClick={cancelEditExpense}
-                                  className="flex-1 rounded-lg border border-gray-300 py-2 text-xs font-semibold text-gray-600">
-                                  Cancel
-                                </button>
+                              <span className="ml-2 shrink-0 text-sm font-bold" style={{ color: '#B8922A' }}>{formatPHP(ex.amount)}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs text-gray-400">{shortDate(ex.date)}</span>
+                                <CategoryBadge category={ex.category} />
+                                <span className="text-xs text-gray-400">{ex.payment_type}</span>
+                                {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {isPastMonth(ex.date) ? (
+                                  <span className="text-[10px] text-gray-400 italic">Locked</span>
+                                ) : (
+                                  <>
+                                    <button onClick={() => startEditExpense(ex)} className="text-xs font-medium text-[#B8922A]">Edit</button>
+                                    <button onClick={() => requestDeleteExpense(ex.id)} className="text-xs font-medium text-red-400">Del</button>
+                                  </>
+                                )}
                               </div>
                             </div>
-                          ) : (
-                            <>
-                              <div className="flex items-start justify-between mb-1">
-                                <div>
-                                  <span className="text-sm font-semibold text-gray-800">
-                                    {ex.description || ex.assignee || ex.category}
-                                  </span>
-                                  {ex.assignee && ex.description && (
-                                    <span className="ml-2 text-xs text-gray-400">{ex.assignee}</span>
-                                  )}
-                                </div>
-                                <span className="text-sm font-bold" style={{ color: '#B8922A' }}>{formatPHP(ex.amount)}</span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-xs text-gray-400">{shortDate(ex.date)}</span>
-                                  <CategoryBadge category={ex.category} />
-                                  <span className="text-xs text-gray-400">{ex.payment_type}</span>
-                                  {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {isPastMonth(ex.date) ? (
-                                    <span className="text-[10px] text-gray-400 italic">Locked</span>
-                                  ) : (
-                                    <>
-                                      <button onClick={() => startEditExpense(ex)}
-                                        className="text-xs font-medium text-[#B8922A]">Edit</button>
-                                      <button onClick={() => requestDeleteExpense(ex.id)}
-                                        className="text-xs font-medium text-red-400">Del</button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                              {ex.notes && <p className="mt-1 text-xs text-gray-400 italic">{ex.notes}</p>}
-                            </>
-                          )}
+                            {ex.notes && <p className="mt-1 text-xs text-gray-400 italic">{ex.notes}</p>}
+                          </div>
                         </div>
-                      )
-                    })}
+                      </div>
+                    ))}
                     <div className="flex justify-between px-4 py-3 border-t-2 border-gray-100">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total</span>
-                      <span className="font-bold text-gray-900">{formatPHP(totalExpenses)}</span>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                        {anyFilter ? 'Filtered total' : 'Total'}
+                      </span>
+                      <span className="font-bold text-gray-900">{formatPHP(displayTotal)}</span>
                     </div>
                   </div>
 
                   {/* ── DESKTOP: Full table ── */}
                   <div className="hidden sm:block overflow-x-auto">
-                    <table className="w-full min-w-[700px] text-sm">
+                    <table className="w-full min-w-[760px] text-sm">
                       <thead>
-                        <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
-                          <th className="px-6 py-3">Date</th>
-                          <th className="px-6 py-3">Assignee</th>
-                          <th className="px-6 py-3">Description</th>
-                          <th className="px-6 py-3">Category</th>
-                          <th className="px-6 py-3">Amount</th>
-                          <th className="px-6 py-3">Payment</th>
-                          <th className="px-6 py-3">Notes</th>
-                          <th className="px-6 py-3" />
+                        <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                          <th className="px-4 py-3 w-8">
+                            <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll}
+                              className="h-4 w-4 rounded border-gray-300 accent-[#B8922A]" />
+                          </th>
+                          {(['date','assignee','description','category','amount','payment_type'] as const).map((col) => (
+                            <th key={col} className="px-4 py-3 cursor-pointer select-none hover:text-gray-600 whitespace-nowrap"
+                              onClick={() => toggleSort(col)}>
+                              {col === 'payment_type' ? 'Payment' : col.charAt(0).toUpperCase() + col.slice(1)}
+                              {sortIndicator(col)}
+                            </th>
+                          ))}
+                          <th className="px-4 py-3">Notes</th>
+                          <th className="px-4 py-3" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {expenses.map((ex) => {
-                          const isEditing = editingExpenseId === ex.id
-                          return (
-                            <tr key={ex.id} className={isEditing ? 'bg-amber-50' : 'hover:bg-gray-50'}>
-                              <td className="whitespace-nowrap px-6 py-3 text-gray-500">
-                                {isEditing
-                                  ? <input type="date" value={editExpense.date} onChange={(e) => setEditExpense((s) => ({ ...s, date: e.target.value }))} className={editInputCls} />
-                                  : new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
-                              </td>
-                              <td className="px-6 py-3">
-                                {isEditing ? <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>{assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                  : <span className="text-gray-700">{ex.assignee || '—'}</span>}
-                              </td>
-                              <td className="px-6 py-3">
-                                {isEditing
-                                  ? (
-                                    <div className="space-y-1">
-                                      <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
-                                      {payables.length > 0 && (
-                                        <select value={editExpense.payable_id} onChange={(e) => setEditExpense((s) => ({ ...s, payable_id: e.target.value }))} className={editInputCls}>
-                                          <option value="">— Variable —</option>
-                                          {payables.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                        </select>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <span className="font-medium text-gray-800">{ex.description || '—'}</span>
-                                      {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
-                                    </div>
-                                  )}
-                              </td>
-                              <td className="px-6 py-3">
-                                {isEditing ? <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={editInputCls}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
-                                  : <CategoryBadge category={ex.category} />}
-                              </td>
-                              <td className="whitespace-nowrap px-6 py-3">
-                                {isEditing ? <input type="number" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
-                                  : <span className="font-semibold text-gray-900">{formatPHP(ex.amount)}</span>}
-                              </td>
-                              <td className="px-6 py-3">
-                                {isEditing ? <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={editInputCls}>{PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}</select>
-                                  : <span className="text-gray-500">{ex.payment_type}</span>}
-                              </td>
-                              <td className="px-6 py-3">
-                                {isEditing ? <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={editInputCls} placeholder="Notes" />
-                                  : <span className="text-gray-400">{ex.notes || '—'}</span>}
-                              </td>
-                              <td className="whitespace-nowrap px-6 py-3">
-                                {isEditing ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <button onClick={() => saveEditExpense(ex.id)} disabled={editSaving}
-                                      className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                                      style={{ backgroundColor: '#B8922A' }}>
-                                      {editSaving ? '…' : 'Save'}
-                                    </button>
-                                    <button onClick={cancelEditExpense}
-                                      className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100">
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : isPastMonth(ex.date) ? (
-                                  <span className="text-xs text-gray-400 italic" title="Expenses from past months are locked. Contact admin if a correction is needed.">🔒 Locked</span>
-                                ) : (
-                                  <div className="flex items-center gap-1.5">
-                                    <button onClick={() => startEditExpense(ex)}
-                                      className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
-                                      style={{ borderColor: '#B8922A', color: '#B8922A' }}
-                                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
-                                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
-                                      Edit
-                                    </button>
-                                    <button onClick={() => requestDeleteExpense(ex.id)}
-                                      className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50">
-                                      Del
-                                    </button>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          )
-                        })}
+                        {displayedExpenses.map((ex) => (
+                          <tr key={ex.id} className={`hover:bg-gray-50 ${selectedIds.has(ex.id) ? 'bg-amber-50/60' : ''}`}>
+                            <td className="px-4 py-3">
+                              <input type="checkbox" checked={selectedIds.has(ex.id)} onChange={() => toggleSelectId(ex.id)}
+                                className="h-4 w-4 rounded border-gray-300 accent-[#B8922A]" />
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-gray-500">
+                              {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </td>
+                            <td className="px-4 py-3 text-gray-700">{ex.assignee || '—'}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-medium text-gray-800">{ex.description || '—'}</span>
+                                {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3"><CategoryBadge category={ex.category} /></td>
+                            <td className="whitespace-nowrap px-4 py-3 font-semibold text-gray-900">{formatPHP(ex.amount)}</td>
+                            <td className="px-4 py-3 text-gray-500">{ex.payment_type}</td>
+                            <td className="px-4 py-3 text-gray-400">{ex.notes || '—'}</td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              {isPastMonth(ex.date) ? (
+                                <span className="text-xs text-gray-400 italic" title="Locked — past month">🔒</span>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => startEditExpense(ex)}
+                                    className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+                                    style={{ borderColor: '#B8922A', color: '#B8922A' }}
+                                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(184,146,42,0.08)' }}
+                                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent' }}>
+                                    Edit
+                                  </button>
+                                  <button onClick={() => requestDeleteExpense(ex.id)}
+                                    className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50">
+                                    Del
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-gray-100">
-                          <td colSpan={4} className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Total</td>
-                          <td className="px-6 py-3 font-bold text-gray-900">{formatPHP(totalExpenses)}</td>
+                          <td colSpan={5} className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                            {anyFilter ? 'Filtered total' : 'Total'}
+                          </td>
+                          <td className="px-4 py-3 font-bold text-gray-900">{formatPHP(displayTotal)}</td>
                           <td colSpan={3} />
                         </tr>
                       </tfoot>
@@ -1149,13 +1196,129 @@ export default function PnLPage() {
                   </div>
                 </>
               )}
-              {editError && <p className="px-4 py-2 text-sm text-red-600 sm:px-6">{editError}</p>}
             </section>
           </div>
         )}
       </div>
 
-      {/* Admin Override Modal for expense delete */}
+      {/* ── Edit Expense Modal ── */}
+      {editModalExpenseId && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) tryCloseEditModal() }}>
+          <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-lg sm:rounded-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-bold text-gray-900">Edit Expense</h3>
+              <button onClick={tryCloseEditModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Date</label>
+                <input type="date" value={editExpense.date} onChange={(e) => setEditExpense((s) => ({ ...s, date: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Amount (₱)</label>
+                <input type="number" inputMode="decimal" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={inputCls} min="0" step="0.01" />
+              </div>
+              <div>
+                <label className={labelCls}>Category</label>
+                <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={inputCls}>
+                  {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Payment Type</label>
+                <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={inputCls}>
+                  {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Assignee</label>
+                <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={inputCls}>
+                  {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Description</label>
+                <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={inputCls} placeholder="e.g. Gas, Food" />
+              </div>
+              <div className="col-span-2">
+                <label className={labelCls}>Notes</label>
+                <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={inputCls} placeholder="Optional notes…" />
+              </div>
+              {payables.length > 0 && (
+                <div className="col-span-2">
+                  <label className={labelCls}>Pays off a fixed cost? <span className="font-normal text-gray-400">(prevents double-counting)</span></label>
+                  <select value={editExpense.payable_id} onChange={(e) => setEditExpense((s) => ({ ...s, payable_id: e.target.value }))} className={inputCls}>
+                    <option value="">— None (variable expense) —</option>
+                    {payables.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatPHP(p.amount)}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            {editError && <p className="mt-3 text-sm text-red-600">{editError}</p>}
+            <div className="mt-5 flex gap-3">
+              <button onClick={() => saveEditExpense(editModalExpenseId)} disabled={editSaving}
+                className="flex-1 rounded-xl py-3.5 text-sm font-semibold text-white disabled:opacity-60"
+                style={{ backgroundColor: '#B8922A' }}>
+                {editSaving ? 'Saving…' : 'Save Changes'}
+              </button>
+              <button onClick={tryCloseEditModal} disabled={editSaving}
+                className="flex-1 rounded-xl border border-gray-200 py-3.5 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unsaved-changes warning */}
+      {showDirtyWarning && (
+        <ConfirmModal
+          title="Unsaved Changes"
+          message="You have unsaved changes. Are you sure you want to leave without saving?"
+          confirmLabel="Discard & Leave"
+          danger
+          onConfirm={discardEditAndClose}
+          onCancel={() => setShowDirtyWarning(false)}
+        />
+      )}
+
+      {/* Bulk delete action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-20 left-1/2 z-40 -translate-x-1/2 sm:bottom-6">
+          <div className="flex items-center gap-3 rounded-2xl bg-gray-900 px-5 py-3 shadow-2xl">
+            <span className="text-sm font-medium text-white">{selectedIds.size} selected</span>
+            <button onClick={() => setBulkDeleteOverrideOpen(true)}
+              className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600">
+              Delete selected
+            </button>
+            <button onClick={() => setSelectedIds(new Set())}
+              className="text-sm text-gray-400 hover:text-white">✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Override for bulk delete */}
+      <AdminOverrideModal
+        open={bulkDeleteOverrideOpen}
+        onClose={() => setBulkDeleteOverrideOpen(false)}
+        onGranted={() => { setBulkDeleteOverrideOpen(false); setBulkDeleteConfirmOpen(true) }}
+        actionLabel={`delete ${selectedIds.size} expense${selectedIds.size > 1 ? 's' : ''}`}
+      />
+
+      {/* Bulk delete confirm */}
+      {bulkDeleteConfirmOpen && (
+        <ConfirmModal
+          title={`Delete ${selectedIds.size} Expense${selectedIds.size > 1 ? 's' : ''}?`}
+          message={`${selectedIds.size} expense${selectedIds.size > 1 ? 's' : ''} will be soft-deleted and hidden from P&L. This cannot be undone from the UI.`}
+          confirmLabel={bulkDeleting ? 'Deleting…' : 'Delete All'}
+          danger
+          onConfirm={bulkDeleteSelected}
+          onCancel={() => setBulkDeleteConfirmOpen(false)}
+        />
+      )}
+
+      {/* Admin Override Modal for single expense delete */}
       <AdminOverrideModal
         open={deleteOverrideOpen}
         onClose={() => { setDeleteOverrideOpen(false); setPendingDeleteId(null) }}
@@ -1166,7 +1329,7 @@ export default function PnLPage() {
         actionLabel="delete this expense"
       />
 
-      {/* Delete confirmation — bottom sheet on mobile */}
+      {/* Single delete confirmation */}
       {confirmDeleteExpenseId !== null && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:px-4">
           <div className="w-full rounded-t-3xl bg-white p-6 shadow-xl sm:max-w-sm sm:rounded-2xl">
