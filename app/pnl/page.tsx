@@ -97,6 +97,13 @@ function shortDate(iso: string) {
 
 function daysInMonth(year: number, month: number) { return new Date(year, month, 0).getDate() }
 
+function payablePaymentStatus(paid: number, budgeted: number): 'unpaid' | 'partial' | 'paid' | 'over' {
+  if (paid === 0) return 'unpaid'
+  if (paid > budgeted + 1) return 'over'
+  if (paid >= budgeted - 1) return 'paid'
+  return 'partial'
+}
+
 function monthBoundsFromDate(dateStr: string) {
   const d = new Date(dateStr + 'T00:00:00')
   const year = d.getFullYear(); const month = d.getMonth() + 1
@@ -132,6 +139,14 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
 function CategoryBadge({ category }: { category: string }) {
   const cls = CAT_BADGE[category] ?? 'bg-gray-100 text-gray-600'
   return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{category}</span>
+}
+
+function PayablePill({ name }: { name: string }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 whitespace-nowrap">
+      → {name}
+    </span>
+  )
 }
 
 function RevBarChart({ chartDates, chartValues, maxDayRevenue, todayStr, labelStep }: {
@@ -346,7 +361,7 @@ export default function PnLPage() {
   const [formSaving, setFormSaving]     = useState(false)
   const [formError, setFormError]       = useState('')
   const [varExpMonth, setVarExpMonth]       = useState<number>(0)
-  const [paidPayablesMonth, setPaidPayablesMonth] = useState<{ payable_id: string; date: string }[]>([])
+  const [paidPayablesMonth, setPaidPayablesMonth] = useState<{ payable_id: string; amount: number; date: string }[]>([])
   const [kpiTargets, setKpiTargets]     = useState<KpiTargets>(DEFAULT_KPI)
   const [kpiEditing, setKpiEditing]     = useState(false)
   const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
@@ -377,7 +392,7 @@ export default function PnLPage() {
       // Variable expenses (payable_id IS NULL) for breakeven — excludes fixed cost payments
       supabase.from('expenses').select('amount').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).is('payable_id', null),
       // Paid payables this month (payable_id IS NOT NULL) — for checklist and paid fixed cost calc
-      supabase.from('expenses').select('payable_id, date').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).not('payable_id', 'is', null),
+      supabase.from('expenses').select('payable_id, amount, date').gte('date', firstOfMonth).lte('date', lastOfMonth).neq('is_deleted', true).not('payable_id', 'is', null),
     ])
     setTransactions(tx ?? [])
     setExpenses((ex ?? []).filter((e) => e.is_deleted !== true).map((e) => ({ ...e, id: String(e.id), payable_id: e.payable_id ?? null })))
@@ -385,7 +400,7 @@ export default function PnLPage() {
     setPayables(pa ?? [])
     setTxMonth(txM ?? [])
     setVarExpMonth((exM ?? []).reduce((s: number, e: { amount: number }) => s + (e.amount ?? 0), 0))
-    setPaidPayablesMonth((paidExp ?? []) as { payable_id: string; date: string }[])
+    setPaidPayablesMonth((paidExp ?? []) as { payable_id: string; amount: number; date: string }[])
     if (st) {
       const kpi = { revenue_target: st.revenue_target ?? 0, car_count_target: st.car_count_target ?? 0, expense_budget: st.expense_budget ?? 0, kpi_label: st.kpi_label ?? '', net_profit_target: st.net_profit_target ?? 0, kpi_period_days: st.kpi_period_days ?? 0 }
       setKpiTargets(kpi); setKpiDraft(kpi)
@@ -421,23 +436,23 @@ export default function PnLPage() {
   const { year: beYear, month: beMonth } = range.from ? monthBoundsFromDate(range.from) : monthBoundsFromDate(todayStr)
   const { firstOfMonth: beFirst, lastOfMonth: beLast } = monthBoundsFromDate(`${beYear}-${String(beMonth).padStart(2, '0')}-01`)
 
-  // Full-month paid payables map (from dedicated DB fetch, not range-filtered expenses)
-  const paidPayableMap: Record<string, string> = {} // payable_id → earliest payment date
+  // Per-payable: sum of actual amounts paid + earliest date this month
+  const paidAmountMap: Record<string, number> = {}
+  const paidDateMap:   Record<string, string>  = {}
   paidPayablesMonth.forEach((e) => {
-    if (!paidPayableMap[e.payable_id] || e.date < paidPayableMap[e.payable_id])
-      paidPayableMap[e.payable_id] = e.date
+    paidAmountMap[e.payable_id] = (paidAmountMap[e.payable_id] ?? 0) + e.amount
+    if (!paidDateMap[e.payable_id] || e.date < paidDateMap[e.payable_id])
+      paidDateMap[e.payable_id] = e.date
   })
 
-  const fixedCosts      = payables.reduce((s, p) => s + p.amount, 0)
-  const paidFixedCosts  = payables.filter((p) => paidPayableMap[p.id]).reduce((s, p) => s + p.amount, 0)
-  const unpaidFixedCosts = fixedCosts - paidFixedCosts
-  // Still Needed = outstanding fixed obligations + variable spending − revenue already earned
-  const revenueMonth    = txMonth.reduce((s, t) => s + t.price, 0)
-  const totalBreakevenCosts = fixedCosts + varExpMonth
-  const remainingObligations = unpaidFixedCosts + varExpMonth  // what hasn't been "covered" by payables yet
-  const remaining       = Math.max(remainingObligations - revenueMonth, 0)
-  const progressPct     = Math.min((revenueMonth / (totalBreakevenCosts || 1)) * 100, 100)
-  const aboveBreakeven  = revenueMonth >= remainingObligations
+  const budgetedFixedCosts  = payables.reduce((s, p) => s + p.amount, 0)
+  const fixedCostsPaid      = Object.values(paidAmountMap).reduce((s, v) => s + v, 0)
+  const revenueMonth        = txMonth.reduce((s, t) => s + t.price, 0)
+  // Breakeven = actual cash out (what's been paid) vs revenue earned
+  const totalBreakevenCosts = fixedCostsPaid + varExpMonth
+  const remaining           = Math.max(totalBreakevenCosts - revenueMonth, 0)
+  const progressPct         = Math.min((revenueMonth / (totalBreakevenCosts || 1)) * 100, 100)
+  const aboveBreakeven      = revenueMonth >= totalBreakevenCosts
   const totalDays       = daysInMonth(beYear, beMonth)
   const dayOfMonth      = now.getFullYear() === beYear && now.getMonth() + 1 === beMonth ? now.getDate() : totalDays
   const daysLeft        = Math.max(totalDays - dayOfMonth + 1, 0)
@@ -604,27 +619,29 @@ export default function PnLPage() {
               <h2 className="mb-3 text-sm font-semibold text-gray-800 sm:mb-4 sm:text-base">
                 Breakeven — <span style={{ color: '#B8922A' }}>{beMonthLabel}</span>
               </h2>
-              {/* Cost breakdown badge */}
-              <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs text-gray-600 space-y-0.5">
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                  <span>
-                    <span className="font-semibold" style={{ color: '#B8922A' }}>Fixed: </span>
-                    {formatPHP(fixedCosts)}
-                    {paidFixedCosts > 0 && <span className="ml-1 text-green-600">({formatPHP(paidFixedCosts)} paid)</span>}
-                  </span>
-                  {varExpMonth > 0 && (
-                    <span><span className="font-semibold" style={{ color: '#B8922A' }}>Variable: </span>{formatPHP(varExpMonth)}</span>
-                  )}
+              {/* 3-stat cost breakdown */}
+              <div className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-center sm:gap-4">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Budgeted Fixed</p>
+                  <p className="mt-0.5 text-sm font-bold text-gray-700 sm:text-base">{formatPHP(budgetedFixedCosts)}</p>
+                  <p className="text-[10px] text-gray-400">Reference</p>
                 </div>
-                <div className="font-semibold text-gray-800">
-                  Outstanding obligations: {formatPHP(unpaidFixedCosts)} unpaid fixed
-                  {varExpMonth > 0 ? ` + ${formatPHP(varExpMonth)} variable = ${formatPHP(remainingObligations)}` : ''}
+                <div className="border-x border-amber-100">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Fixed Paid</p>
+                  <p className="mt-0.5 text-sm font-bold sm:text-base" style={{ color: '#B8922A' }}>{formatPHP(fixedCostsPaid)}</p>
+                  <p className="text-[10px] text-gray-400">Actual outflow</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Variable</p>
+                  <p className="mt-0.5 text-sm font-bold text-blue-600 sm:text-base">{formatPHP(varExpMonth)}</p>
+                  <p className="text-[10px] text-gray-400">Unlinked expenses</p>
                 </div>
               </div>
               <div className="mb-4 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Obligations Left</p>
-                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(remainingObligations)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Total Spent</p>
+                  <p className="text-lg font-bold text-gray-900 sm:text-xl">{formatPHP(totalBreakevenCosts)}</p>
+                  <p className="text-[10px] text-gray-400">Fixed paid + Variable</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revenue This Month</p>
@@ -633,7 +650,7 @@ export default function PnLPage() {
                 <div className="col-span-2 sm:col-span-1">
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{aboveBreakeven ? 'Above Breakeven By' : 'Still Needed'}</p>
                   <p className={`text-lg font-bold sm:text-xl ${aboveBreakeven ? 'text-green-600' : 'text-red-500'}`}>
-                    {formatPHP(aboveBreakeven ? revenueMonth - remainingObligations : remaining)}
+                    {formatPHP(aboveBreakeven ? revenueMonth - totalBreakevenCosts : remaining)}
                   </p>
                 </div>
               </div>
@@ -643,7 +660,7 @@ export default function PnLPage() {
               </div>
               <div className="mb-4 flex justify-between text-xs text-gray-400">
                 <span>₱0</span>
-                <span>{progressPct.toFixed(1)}% of total target</span>
+                <span>{progressPct.toFixed(1)}% of total spent</span>
                 <span>{formatPHP(totalBreakevenCosts)}</span>
               </div>
               <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 sm:px-4 sm:py-3">
@@ -667,29 +684,58 @@ export default function PnLPage() {
                 </div>
               </div>
 
-              {/* Payables paid/outstanding checklist */}
+              {/* Payables checklist with per-item status */}
               {payables.length > 0 && (
                 <div className="mt-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Fixed Costs Status</p>
-                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {payables.map((p) => {
-                      const paidDate = paidPayableMap[p.id]
+                      const paidAmt  = paidAmountMap[p.id] ?? 0
+                      const status   = payablePaymentStatus(paidAmt, p.amount)
+                      const paidDate = paidDateMap[p.id]
+                      const pct      = Math.min((paidAmt / (p.amount || 1)) * 100, 100)
+                      const bgCls    = status === 'paid' ? 'bg-green-50' : status === 'partial' ? 'bg-amber-50' : status === 'over' ? 'bg-red-50' : 'bg-gray-50'
+                      const iconCls  = status === 'paid' ? 'text-green-600' : status === 'partial' ? 'text-amber-500' : status === 'over' ? 'text-red-500' : 'text-gray-400'
+                      const nameCls  = status === 'paid' ? 'text-green-700' : status === 'partial' ? 'text-amber-700' : status === 'over' ? 'text-red-700' : 'text-gray-600'
+                      const icon     = status === 'paid' ? '✓' : status === 'partial' ? '◑' : status === 'over' ? '!' : '○'
                       return (
-                        <div key={p.id} className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${paidDate ? 'bg-green-50' : 'bg-gray-50'}`}>
-                          <div className="flex items-center gap-2">
-                            <span className={paidDate ? 'text-green-600' : 'text-gray-400'}>
-                              {paidDate ? '✓' : '○'}
-                            </span>
-                            <span className={`font-medium ${paidDate ? 'text-green-700' : 'text-gray-700'}`}>{p.name}</span>
+                        <div key={p.id} className={`rounded-lg px-3 py-2 text-xs ${bgCls}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <span className={`shrink-0 font-bold ${iconCls}`}>{icon}</span>
+                              <span className={`truncate font-medium ${nameCls}`}>{p.name}</span>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              {status === 'paid' && (
+                                <span className="font-semibold text-green-600">{formatPHP(paidAmt)}</span>
+                              )}
+                              {status === 'partial' && (
+                                <span className="text-amber-600">
+                                  {formatPHP(paidAmt)}{' '}
+                                  <span className="text-gray-400">of {formatPHP(p.amount)}</span>
+                                </span>
+                              )}
+                              {status === 'over' && (
+                                <span className="font-semibold text-red-600">Over {formatPHP(paidAmt - p.amount)}</span>
+                              )}
+                              {status === 'unpaid' && (
+                                <span className="text-gray-400">
+                                  {formatPHP(p.amount)}{p.due_day ? ` · d${p.due_day}` : ''}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="text-gray-500">{formatPHP(p.amount)}</span>
-                            {paidDate ? (
-                              <span className="ml-2 text-green-600">paid {new Date(paidDate + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</span>
-                            ) : p.due_day ? (
-                              <span className="ml-2 text-gray-400">due day {p.due_day}</span>
-                            ) : null}
-                          </div>
+                          {status === 'partial' && (
+                            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-amber-100">
+                              <div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+                            </div>
+                          )}
+                          {paidDate && status !== 'unpaid' && (
+                            <p className="mt-0.5 text-[10px] text-gray-400">
+                              {status === 'partial' ? 'Last paid' : 'Paid'}{' '}
+                              {new Date(paidDate + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </p>
+                          )}
                         </div>
                       )
                     })}
@@ -930,10 +976,11 @@ export default function PnLPage() {
                                 <span className="text-sm font-bold" style={{ color: '#B8922A' }}>{formatPHP(ex.amount)}</span>
                               </div>
                               <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-xs text-gray-400">{shortDate(ex.date)}</span>
                                   <CategoryBadge category={ex.category} />
                                   <span className="text-xs text-gray-400">{ex.payment_type}</span>
+                                  {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {isPastMonth(ex.date) ? (
@@ -989,7 +1036,12 @@ export default function PnLPage() {
                               </td>
                               <td className="px-6 py-3">
                                 {isEditing ? <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
-                                  : <span className="font-medium text-gray-800">{ex.description || '—'}</span>}
+                                  : (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-medium text-gray-800">{ex.description || '—'}</span>
+                                      {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
+                                    </div>
+                                  )}
                               </td>
                               <td className="px-6 py-3">
                                 {isEditing ? <select value={editExpense.category} onChange={(e) => setEditExpense((s) => ({ ...s, category: e.target.value }))} className={editInputCls}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
