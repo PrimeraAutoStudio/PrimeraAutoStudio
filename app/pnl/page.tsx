@@ -29,8 +29,8 @@ interface ExpenseForm {
 }
 
 interface EditExpenseState {
-  assignee: string; description: string; category: string
-  amount: string; payment_type: string; notes: string
+  date: string; assignee: string; description: string; category: string
+  amount: string; payment_type: string; notes: string; payable_id: string
 }
 
 interface EmployeeOption { id: string; full_name: string; last_name: string | null }
@@ -367,7 +367,7 @@ export default function PnLPage() {
   const [kpiDraft, setKpiDraft]         = useState<KpiTargets>(DEFAULT_KPI)
   const [kpiSaving, setKpiSaving]       = useState(false)
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null)
-  const [editExpense, setEditExpense] = useState<EditExpenseState>({ assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '' })
+  const [editExpense, setEditExpense] = useState<EditExpenseState>({ date: '', assignee: '', description: '', category: '', amount: '', payment_type: '', notes: '', payable_id: '' })
   const [editSaving, setEditSaving]   = useState(false)
   const [editError, setEditError]     = useState('')
   const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState<string | null>(null)
@@ -519,7 +519,7 @@ export default function PnLPage() {
   function startEditExpense(ex: Expense) {
     if (isPastMonth(ex.date)) return
     setEditingExpenseId(ex.id)
-    setEditExpense({ assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '' })
+    setEditExpense({ date: ex.date, assignee: ex.assignee ?? '', description: ex.description ?? '', category: ex.category, amount: String(ex.amount), payment_type: ex.payment_type, notes: ex.notes ?? '', payable_id: ex.payable_id ?? '' })
     setEditError('')
   }
 
@@ -527,11 +527,20 @@ export default function PnLPage() {
 
   async function saveEditExpense(id: string) {
     setEditSaving(true); setEditError('')
-    const { error } = await supabase.from('expenses').update({ assignee: editExpense.assignee || null, description: editExpense.description, category: editExpense.category, amount: parseFloat(editExpense.amount) || 0, payment_type: editExpense.payment_type, notes: editExpense.notes }).eq('id', id)
+    const { error } = await supabase.from('expenses').update({
+      date: editExpense.date,
+      assignee: editExpense.assignee || null,
+      description: editExpense.description,
+      category: editExpense.category,
+      amount: parseFloat(editExpense.amount) || 0,
+      payment_type: editExpense.payment_type,
+      notes: editExpense.notes || null,
+      payable_id: editExpense.payable_id || null,
+    }).eq('id', id)
     setEditSaving(false)
     if (error) { setEditError(error.message); return }
-    setExpenses((prev) => prev.map((e) => e.id === id ? { ...e, ...editExpense, amount: parseFloat(editExpense.amount) || 0, assignee: editExpense.assignee || null, notes: editExpense.notes || null } : e))
     setEditingExpenseId(null)
+    fetchData()  // refetch so breakeven reflects any payable_id change
   }
 
   function requestDeleteExpense(id: string) {
@@ -929,10 +938,12 @@ export default function PnLPage() {
                             <div className="space-y-2">
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Assignee</label>
-                                  <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>
-                                    {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                  </select>
+                                  <label className="mb-0.5 block text-xs text-gray-500">Date</label>
+                                  <input type="date" value={editExpense.date} onChange={(e) => setEditExpense((s) => ({ ...s, date: e.target.value }))} className={editInputCls} />
+                                </div>
+                                <div>
+                                  <label className="mb-0.5 block text-xs text-gray-500">Amount (₱)</label>
+                                  <input type="number" inputMode="decimal" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
                                 </div>
                                 <div>
                                   <label className="mb-0.5 block text-xs text-gray-500">Category</label>
@@ -941,13 +952,34 @@ export default function PnLPage() {
                                   </select>
                                 </div>
                                 <div>
+                                  <label className="mb-0.5 block text-xs text-gray-500">Payment</label>
+                                  <select value={editExpense.payment_type} onChange={(e) => setEditExpense((s) => ({ ...s, payment_type: e.target.value }))} className={editInputCls}>
+                                    {PAYMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="mb-0.5 block text-xs text-gray-500">Assignee</label>
+                                  <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>
+                                    {assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                  </select>
+                                </div>
+                                <div>
                                   <label className="mb-0.5 block text-xs text-gray-500">Description</label>
                                   <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
                                 </div>
-                                <div>
-                                  <label className="mb-0.5 block text-xs text-gray-500">Amount</label>
-                                  <input type="number" inputMode="decimal" value={editExpense.amount} onChange={(e) => setEditExpense((s) => ({ ...s, amount: e.target.value }))} className={editInputCls} min="0" step="0.01" />
+                                <div className="col-span-2">
+                                  <label className="mb-0.5 block text-xs text-gray-500">Notes</label>
+                                  <input type="text" value={editExpense.notes} onChange={(e) => setEditExpense((s) => ({ ...s, notes: e.target.value }))} className={editInputCls} placeholder="Optional notes…" />
                                 </div>
+                                {payables.length > 0 && (
+                                  <div className="col-span-2">
+                                    <label className="mb-0.5 block text-xs text-gray-500">Pays off a fixed cost?</label>
+                                    <select value={editExpense.payable_id} onChange={(e) => setEditExpense((s) => ({ ...s, payable_id: e.target.value }))} className={editInputCls}>
+                                      <option value="">— None (variable expense) —</option>
+                                      {payables.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatPHP(p.amount)}</option>)}
+                                    </select>
+                                  </div>
+                                )}
                               </div>
                               {editError && <p className="text-xs text-red-600">{editError}</p>}
                               <div className="flex gap-2 pt-1">
@@ -1028,15 +1060,27 @@ export default function PnLPage() {
                           return (
                             <tr key={ex.id} className={isEditing ? 'bg-amber-50' : 'hover:bg-gray-50'}>
                               <td className="whitespace-nowrap px-6 py-3 text-gray-500">
-                                {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                                {isEditing
+                                  ? <input type="date" value={editExpense.date} onChange={(e) => setEditExpense((s) => ({ ...s, date: e.target.value }))} className={editInputCls} />
+                                  : new Date(ex.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
                               </td>
                               <td className="px-6 py-3">
                                 {isEditing ? <select value={editExpense.assignee} onChange={(e) => setEditExpense((s) => ({ ...s, assignee: e.target.value }))} className={editInputCls}>{assigneeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                   : <span className="text-gray-700">{ex.assignee || '—'}</span>}
                               </td>
                               <td className="px-6 py-3">
-                                {isEditing ? <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
-                                  : (
+                                {isEditing
+                                  ? (
+                                    <div className="space-y-1">
+                                      <input type="text" value={editExpense.description} onChange={(e) => setEditExpense((s) => ({ ...s, description: e.target.value }))} className={editInputCls} placeholder="Description" />
+                                      {payables.length > 0 && (
+                                        <select value={editExpense.payable_id} onChange={(e) => setEditExpense((s) => ({ ...s, payable_id: e.target.value }))} className={editInputCls}>
+                                          <option value="">— Variable —</option>
+                                          {payables.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                      )}
+                                    </div>
+                                  ) : (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <span className="font-medium text-gray-800">{ex.description || '—'}</span>
                                       {ex.payable_id && (() => { const p = payables.find((p) => p.id === ex.payable_id); return p ? <PayablePill name={p.name} /> : null })()}
